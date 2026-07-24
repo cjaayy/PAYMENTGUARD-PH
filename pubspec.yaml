@@ -22,8 +22,7 @@ dependencies:
   # Voice Alerts (Tagalog/English TTS)
   flutter_tts: ^4.2.1
 
-  # SMS Listener for Android
-  telephony: ^0.2.0
+  another_telephony: ^0.4.0
 
   # State Management
   flutter_riverpod: ^2.6.1

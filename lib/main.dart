@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'screens/platform_router.dart';
 import 'services/duplicate_checker_service.dart';
+import 'package:another_telephony/telephony.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
