@@ -1,0 +1,41 @@
+name: paymentguard_ph
+description: A multi-platform app designed for Philippine small businesses to prevent GCash/Maya fake screenshot scams.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Firebase Core & Services
+  firebase_core: ^3.10.0
+  cloud_firestore: ^5.6.1
+  firebase_auth: ^5.4.1
+
+  # Hive for local offline duplicate checking
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Voice Alerts (Tagalog/English TTS)
+  flutter_tts: ^4.2.1
+
+  # SMS Listener for Android
+  telephony: ^0.2.0
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+
+  # Utilities & Helpers
+  permission_handler: ^11.3.1
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
