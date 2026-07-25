@@ -13,15 +13,26 @@ class MockVoiceAlertService extends VoiceAlertService {
   bool duplicateWarningSpoken = false;
 
   @override
-  Future<void> speakPaymentReceived({required double amount, required String senderName}) async {
+  Future<void> speakLegitPaymentAlert({
+    required double? amount,
+    required String senderName,
+    required String? refNumber,
+    String? provider,
+  }) async {
     paymentAlertSpoken = true;
-    lastSpokenText = 'Pumasok na ang $amount pesos mula kay $senderName';
+    lastSpokenText = 'Received $amount pesos from $senderName. Reference number $refNumber.';
+  }
+
+  @override
+  Future<void> speakPaymentReceived({required double amount, required String senderName, String? refNumber}) async {
+    paymentAlertSpoken = true;
+    lastSpokenText = 'Received $amount pesos from $senderName. Reference number $refNumber.';
   }
 
   @override
   Future<void> speakDuplicateWarning({required String refNumber}) async {
     duplicateWarningSpoken = true;
-    lastSpokenText = 'Babala! Ref $refNumber nagamit na';
+    lastSpokenText = 'Warning! Reference number $refNumber has already been used.';
   }
 }
 

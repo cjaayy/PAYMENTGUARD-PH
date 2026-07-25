@@ -57,8 +57,8 @@ class TransactionProcessor {
     if (parsedResult.isScam) {
       debugPrint('[TransactionProcessor] SCAM DETECTED: ${parsedResult.rawBody}');
 
-      // a. Urgent Tagalog Voice Scam Alert
-      await _voiceAlert.speakScamWarningAlert();
+      // a. Urgent English Voice Scam Alert
+      await _voiceAlert.speakScamWarningAlert(senderName: parsedResult.senderName);
 
       // b. Build Scam Transaction Object
       final scamTx = TransactionModel(
@@ -121,8 +121,13 @@ class TransactionProcessor {
     // a. Save reference number locally in Hive
     await _duplicateChecker.saveReferenceLocally(refNumber);
 
-    // b. Trigger Tagalog Voice Alert ("Nakatanggap ka ng [amount] piso mula kay [senderName]")
-    await _voiceAlert.speakLegitPaymentAlert(amount: amount, senderName: senderName);
+    // b. Trigger English Voice Alert ("Received [Amount] pesos via [Provider]. Reference number [RefNo].")
+    await _voiceAlert.speakLegitPaymentAlert(
+      amount: amount,
+      senderName: senderName,
+      refNumber: refNumber,
+      provider: parsedResult.provider,
+    );
 
     // c. Build Verified Transaction Object
     final verifiedTx = TransactionModel(

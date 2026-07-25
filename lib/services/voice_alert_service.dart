@@ -1,152 +1,130 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
-/// Voice Alert Service utilizing Text-to-Speech (TTS) for Tagalog & English payment notifications.
+/// Voice Alert Service utilizing Text-to-Speech (TTS) for English payment notifications.
 class VoiceAlertService {
   final FlutterTts _flutterTts;
   bool _isInitialized = false;
-  String _activeLanguage = 'tl-PH';
 
   VoiceAlertService({FlutterTts? tts}) : _flutterTts = tts ?? FlutterTts();
 
-  /// Initializes TTS engine with Tagalog (`tl-PH`) language settings and English fallback.
+  /// Formats reference number string into space-separated digits so TTS speaks digits one-by-one.
+  /// Example: "1002938475" -> "1 0 0 2 9 3 8 4 7 5"
+  static String formatRefForSpeech(String? refNo) {
+    if (refNo == null || refNo.trim().isEmpty) return 'Unknown';
+    return refNo.trim().split('').join(' ');
+  }
+
+  /// Initializes TTS engine with English (`en-US`) language settings.
   Future<void> init() async {
     if (_isInitialized) return;
 
     try {
-      // Check available languages
-      final languages = await _flutterTts.getLanguages;
-      final langList = (languages as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
-
-      if (langList.any((lang) => lang.contains('tl') || lang.contains('fil'))) {
-        _activeLanguage = 'tl-PH';
-      } else {
-        _activeLanguage = 'en-US'; // English fallback
-        debugPrint('[VoiceAlertService] Tagalog TTS voice unavailable. Falling back to en-US.');
-      }
-
-      await _flutterTts.setLanguage(_activeLanguage);
-      await _flutterTts.setSpeechRate(0.48); // Slightly slower for clear Tagalog comprehension
+      await _flutterTts.setLanguage("en-US");
+      await _flutterTts.setSpeechRate(0.5);
       await _flutterTts.setVolume(1.0);
       await _flutterTts.setPitch(1.0);
       _isInitialized = true;
-      debugPrint('[VoiceAlertService] Initialized TTS with language: $_activeLanguage');
+      debugPrint('[VoiceAlertService] Initialized TTS with language: en-US');
     } catch (e) {
       debugPrint('[VoiceAlertService] TTS Initialization warning: $e');
     }
   }
 
-  /// Helper converter for amounts like 500 -> "limandaang piso" or "500 pesos"
-  String _formatAmountInTagalog(double? amount) {
-    if (amount == null || amount <= 0) return 'piso';
-    if (amount == 500) return 'limandaang piso';
-    if (amount == 100) return 'sandaang piso';
-    if (amount == 1000) return 'isang libong piso';
-
-    final formattedStr = amount % 1 == 0 ? amount.toInt().toString() : amount.toStringAsFixed(2);
-    return '$formattedStr pesos';
+  /// Helper formatting for numeric amounts (e.g. 150.00 -> "150", 1250.5 -> "1250.50").
+  String _formatAmount(double? amount) {
+    if (amount == null || amount <= 0) return '0';
+    return amount % 1 == 0 ? amount.toInt().toString() : amount.toStringAsFixed(2);
   }
 
-  /// Triggers a Tagalog voice announcement for a newly verified payment received.
-  /// Example audio: "Nakatanggap ka ng limandaang piso mula kay JUAN D."
+  /// For Legit Incoming SMS:
+  /// "Received [Amount] pesos via [Provider]. Reference number [Formatted_RefNo]."
   Future<void> speakLegitPaymentAlert({
     required double? amount,
     required String senderName,
+    required String? refNumber,
+    String? provider,
   }) async {
     await init();
 
-    final amountText = _formatAmountInTagalog(amount);
-    final text = _activeLanguage.startsWith('tl')
-        ? 'Nakatanggap ka ng $amountText mula kay $senderName.'
-        : 'Payment of $amountText received from $senderName.';
+    final amountText = _formatAmount(amount);
+    final formattedRef = formatRefForSpeech(refNumber);
+    final providerText = (provider != null && provider.isNotEmpty) ? provider : 'GCash';
+    final text = 'Received $amountText pesos via $providerText. Reference number $formattedRef.';
 
     debugPrint('[VoiceAlertService] Speaking legit payment alert: "$text"');
     await _flutterTts.stop();
     await _flutterTts.speak(text);
   }
 
-  /// Triggers a Tagalog voice announcement when an e-wallet receipt is verified via Camera OCR Scanner.
-  /// Example audio: "Naka-scan ng resibo mula kay Juan D. para sa limandaang piso."
-  Future<void> speakOcrReceiptAlert({
-    required String senderName,
-    required double? amount,
-  }) async {
+  /// For Scam/Phishing SMS Warning:
+  /// "Warning! Suspicious message detected from [Sender]. Possible scam alert."
+  Future<void> speakScamWarningAlert({String? senderName}) async {
     await init();
 
-    final amountText = _formatAmountInTagalog(amount);
-    final text = _activeLanguage.startsWith('tl')
-        ? 'Naka-scan ng resibo mula kay $senderName para sa $amountText.'
-        : 'Scanned receipt from $senderName for $amountText.';
-
-    debugPrint('[VoiceAlertService] Speaking OCR receipt alert: "$text"');
-    await _flutterTts.stop();
-    await _flutterTts.speak(text);
-  }
-
-  /// Triggers a Tagalog voice announcement when an OCR scanned receipt matches an incoming SMS record in Firestore.
-  /// Example audio: "Naka-scan ng resibo. Verified payment mula kay Juan D.!"
-  Future<void> speakOcrMatchedAlert({
-    required String senderName,
-    required double? amount,
-  }) async {
-    await init();
-
-    final amountText = _formatAmountInTagalog(amount);
-    final text = _activeLanguage.startsWith('tl')
-        ? 'Naka-scan ng resibo. Verified payment mula kay $senderName para sa $amountText!'
-        : 'Scanned receipt verified. Payment of $amountText from $senderName confirmed!';
-
-    debugPrint('[VoiceAlertService] Speaking OCR matched alert: "$text"');
-    await _flutterTts.stop();
-    await _flutterTts.speak(text);
-  }
-
-  /// Triggers a Tagalog voice warning when an OCR scanned receipt has NO matching incoming SMS record in Firestore.
-  /// Example audio: "Babala! Walang nahanap na katumbas na SMS para sa reference number na ito. Mangyaring suriin."
-  Future<void> speakOcrUnverifiedWarning({
-    required String? refNumber,
-  }) async {
-    await init();
-
-    final text = _activeLanguage.startsWith('tl')
-        ? 'Babala! Walang nahanap na katumbas na SMS para sa reference number na ito. Mangyaring suriin nang manu-mano.'
-        : 'Warning! No matching SMS record found for this reference number. Manual verification required.';
-
-    debugPrint('[VoiceAlertService] Speaking OCR unverified warning: "$text"');
-    await _flutterTts.stop();
-    await _flutterTts.speak(text);
-  }
-
-  /// Triggers an urgent Tagalog voice warning when a phishing / scam SMS is detected.
-  /// Spoken text: "Babala! Ang natanggap mong mensahe ay naglalaman ng kahina-hinalang link. Huwag mag-click."
-  Future<void> speakScamWarningAlert() async {
-    await init();
-
-    const text = 'Babala! Ang natanggap mong mensahe ay naglalaman ng kahina-hinalang link. Huwag mag-click.';
+    final sender = (senderName != null && senderName.isNotEmpty) ? senderName : 'Unknown Sender';
+    final text = 'Warning! Suspicious message detected from $sender. Possible scam alert.';
 
     debugPrint('[VoiceAlertService] Speaking scam warning alert: "$text"');
     await _flutterTts.stop();
     await _flutterTts.speak(text);
   }
 
-  /// Triggers a Tagalog voice announcement for a newly verified payment received (legacy signature).
+  /// For Successful OCR Receipt Scan:
+  /// "Receipt scanned. Amount [Amount] pesos via [Provider]. Reference number [Formatted_RefNo]."
+  Future<void> speakOcrMatchedAlert({
+    required String? refNumber,
+    required double? amount,
+    String? senderName,
+    String? provider,
+  }) async {
+    await init();
+
+    final amountText = _formatAmount(amount);
+    final formattedRef = formatRefForSpeech(refNumber);
+    final providerText = (provider != null && provider.isNotEmpty) ? provider : 'GCash';
+    final text = 'Receipt scanned. Amount $amountText pesos via $providerText. Reference number $formattedRef.';
+
+    debugPrint('[VoiceAlertService] Speaking OCR matched alert: "$text"');
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
+  }
+
+  /// For Unverified OCR Scan:
+  /// "Warning. Receipt scanned, but no matching transaction was found in database."
+  Future<void> speakOcrUnverifiedWarning({
+    String? refNumber,
+  }) async {
+    await init();
+
+    const text = 'Warning. Receipt scanned, but no matching transaction was found in database.';
+
+    debugPrint('[VoiceAlertService] Speaking OCR unverified warning: "$text"');
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
+  }
+
+  /// Helper for legacy callers
   Future<void> speakPaymentReceived({
     required double amount,
     required String senderName,
+    String? refNumber,
   }) async {
-    await speakLegitPaymentAlert(amount: amount, senderName: senderName);
+    await speakLegitPaymentAlert(
+      amount: amount,
+      senderName: senderName,
+      refNumber: refNumber ?? 'NO_REF',
+    );
   }
 
-  /// Triggers a high-priority Tagalog voice warning when a duplicate reference number / fake screenshot attempt occurs.
-  /// Example audio: "Babala! Ang reference number 102938475610 ay nagamit na. Fake screenshot alert."
+  /// High-priority warning when a duplicate reference number occurs.
   Future<void> speakDuplicateWarning({
     required String refNumber,
   }) async {
     await init();
 
-    final text = _activeLanguage.startsWith('tl')
-        ? 'Babala! Ang reference number $refNumber ay nagamit na. Fake screenshot alert.'
-        : 'Warning! Reference number $refNumber has already been used. Fake screenshot alert.';
+    final formattedRef = formatRefForSpeech(refNumber);
+    final text = 'Warning! Reference number $formattedRef has already been used. Possible duplicate alert.';
 
     debugPrint('[VoiceAlertService] Speaking duplicate warning: "$text"');
     await _flutterTts.stop();

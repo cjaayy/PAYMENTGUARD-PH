@@ -41,7 +41,8 @@ class TransactionModel {
   final double? amount;
   final String refNumber;
   final String senderName;
-  final String source; // e.g., 'GCash', 'Maya'
+  final String provider; // e.g. 'GCash', 'Maya', 'MariBank', 'Unknown Provider'
+  final String source; // e.g., 'GCash', 'Maya', 'MariBank'
   final DateTime timestamp;
   final String status; // 'VERIFIED', 'DUPLICATE_REJECTED', 'SCAM_FLAGGED'
   final String sender; // e.g., 'GCash'
@@ -62,7 +63,8 @@ class TransactionModel {
     required this.message,
     required this.isScam,
     required this.threatLevel,
-  });
+    String? provider,
+  }) : provider = provider ?? source;
 
   /// Factory constructor to create a [TransactionModel] from a Map (Firestore data).
   factory TransactionModel.fromMap(Map<String, dynamic> map, {String? id}) {
@@ -83,7 +85,8 @@ class TransactionModel {
     final String threatLevelVal = (map['threatLevel'] as String?) ??
         (map['threat_level'] as String?) ??
         (isScamVal ? 'HIGH' : 'LOW');
-    final String senderVal = (map['sender'] as String?) ?? (map['source'] as String?) ?? 'GCash';
+    final String providerVal = (map['provider'] as String?) ?? (map['source'] as String?) ?? (map['sender'] as String?) ?? 'Unknown Provider';
+    final String senderVal = (map['sender'] as String?) ?? providerVal;
     final String messageVal = (map['message'] as String?) ?? '';
 
     return TransactionModel(
@@ -92,7 +95,8 @@ class TransactionModel {
       amount: (map['amount'] as num?)?.toDouble(),
       refNumber: (map['ref_number'] as String?) ?? '',
       senderName: (map['sender_name'] as String?) ?? (isScamVal ? 'SUSPICIOUS SENDER' : 'UNKNOWN SENDER'),
-      source: (map['source'] as String?) ?? senderVal,
+      source: providerVal,
+      provider: providerVal,
       timestamp: parsedTimestamp,
       status: (map['status'] as String?) ?? (isScamVal ? 'SCAM_FLAGGED' : TransactionStatus.verified.value),
       sender: senderVal,
@@ -119,8 +123,10 @@ class TransactionModel {
       'merchant_id': merchantId,
       'amount': amount,
       'ref_number': refNumber,
+      'reference_no': refNumber,
       'sender_name': senderName,
-      'source': source,
+      'provider': provider,
+      'source': provider,
       'sender': sender,
       'message': message,
       'isScam': isScam,

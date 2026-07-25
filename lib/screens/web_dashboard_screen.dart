@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/transaction_model.dart';
+import 'customer_counter_screen.dart';
 
 /// Responsive Web Dashboard & Customer Counter Display Screen for Business Owners.
 class WebDashboardScreen extends StatefulWidget {
@@ -99,7 +100,9 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
         // Customer Display Mode Fullscreen
         if (_isCustomerDisplayMode) {
-          return _buildCustomerCounterView(transactions.firstOrNull);
+          return CustomerCounterView(
+            onExitCounterMode: () => setState(() => _isCustomerDisplayMode = false),
+          );
         }
 
         // Owner Dashboard View
@@ -436,12 +439,16 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                             ),
                             title: Row(
                               children: [
-                                Text(
-                                  tx.senderName,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: isScam ? Colors.redAccent : Colors.white,
+                                Flexible(
+                                  child: Text(
+                                    tx.senderName,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: isScam ? Colors.redAccent : Colors.white,
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(width: 8),

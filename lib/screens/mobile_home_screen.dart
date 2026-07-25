@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -164,43 +165,133 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
               ),
               const SizedBox(height: 12),
               
-              // 1. Test Legit SMS Button
+              // 1. Test GCash SMS Button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00E676),
-                    foregroundColor: Colors.black,
+                    backgroundColor: const Color(0xFF005CE6), // GCash Blue
+                    foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
-                  icon: const Icon(Icons.check_circle_outline, color: Colors.black),
+                  icon: const Icon(Icons.check_circle_outline, color: Colors.white),
                   label: const Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Test Legit SMS (GCash ₱500.00)',
+                        'Test GCash SMS',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                       Text(
-                        'Simulates valid GCash payment from JUAN D.',
-                        style: TextStyle(fontSize: 11, color: Colors.black87),
+                        'Simulates GCash payment (Ref No: 1002...)',
+                        style: TextStyle(fontSize: 11, color: Colors.white70),
                       ),
                     ],
                   ),
                   onPressed: () {
                     Navigator.pop(context);
-                    _handleSimulatedSms(
-                      'You have received PHP 500.00 from JUAN D. with Ref No. 1002938475. Balance: PHP 1,250.00',
-                      sourceHeader: 'GCash',
-                    );
+                    final random = Random();
+                    final String randomRefNo = '1002${random.nextInt(900000) + 100000}';
+                    final List<double> realisticAmounts = [50.0, 100.0, 250.0, 500.0, 1000.0, 1500.0];
+                    final double randomAmount = realisticAmounts[random.nextInt(realisticAmounts.length)];
+                    final String amountStr = randomAmount.toStringAsFixed(2);
+
+                    final String smsPayload =
+                        'You have received PHP $amountStr of GCash from JUAN D. 09171234567 with Ref. No. $randomRefNo on ${DateFormat('MM/dd/yyyy').format(DateTime.now())}.';
+
+                    _handleSimulatedSms(smsPayload, sourceHeader: 'GCash');
                   },
                 ),
               ),
 
               const SizedBox(height: 10),
 
-              // 2. Test Scam SMS Button
+              // 2. Test Maya SMS Button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00D68F), // Maya Teal Green
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.flash_on, color: Colors.black),
+                  label: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Test Maya SMS',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      Text(
+                        'Simulates Maya payment (Ref No: 9876...)',
+                        style: TextStyle(fontSize: 11, color: Colors.black87),
+                      ),
+                    ],
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    final random = Random();
+                    final String randomRefNo = '9876${random.nextInt(900000) + 100000}';
+                    final List<double> realisticAmounts = [50.0, 100.0, 250.0, 500.0, 1000.0, 1500.0];
+                    final double randomAmount = realisticAmounts[random.nextInt(realisticAmounts.length)];
+                    final String amountStr = randomAmount.toStringAsFixed(2);
+
+                    final String smsPayload =
+                        'You received P$amountStr from MARIA CLARA via Maya. Ref No: $randomRefNo on ${DateFormat('MM/dd/yyyy').format(DateTime.now())}.';
+
+                    _handleSimulatedSms(smsPayload, sourceHeader: 'Maya');
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              // 3. Test MariBank SMS Button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF5722), // MariBank Orange
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.account_balance, color: Colors.white),
+                  label: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Test MariBank SMS',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      Text(
+                        'Simulates MariBank transfer (Ref format: MB...)',
+                        style: TextStyle(fontSize: 11, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    final random = Random();
+                    final String randomRefNo = 'MB${random.nextInt(90000000) + 10000000}';
+                    final List<double> realisticAmounts = [50.0, 100.0, 250.0, 500.0, 1000.0, 1500.0];
+                    final double randomAmount = realisticAmounts[random.nextInt(realisticAmounts.length)];
+                    final String amountStr = randomAmount.toStringAsFixed(2);
+
+                    final String smsPayload =
+                        'MariBank: You received PHP $amountStr from PEDRO P. via MariBank transfer. Ref No: $randomRefNo.';
+
+                    _handleSimulatedSms(smsPayload, sourceHeader: 'MB');
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              // 4. Test Scam SMS Button
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -324,23 +415,25 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
     if (ocrResult != null && mounted) {
       final amountDisplay = ocrResult.amount != null ? '₱${ocrResult.amount!.toStringAsFixed(2)}' : 'Payment';
       final bool isMatched = ocrResult.isValid;
-      final String statusStr = isMatched
-          ? 'VERIFIED (MATCHED WITH SMS)'
-          : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)';
+      final String statusStr = ocrResult.isScam
+          ? 'SCAM_FLAGGED (PHISHING LINK DETECTED)'
+          : (isMatched
+              ? 'VERIFIED (MATCHED WITH SMS)'
+              : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)');
 
       final scannedTx = TransactionModel(
         id: 'ocr_${DateTime.now().millisecondsSinceEpoch}',
         merchantId: 'STORE_COUNTER_01',
         amount: ocrResult.amount,
         refNumber: ocrResult.referenceNo ?? 'NO_REF',
-        senderName: ocrResult.sender ?? 'JUAN D.',
+        senderName: ocrResult.sender ?? 'GCash (Scanned)',
         source: ocrResult.walletType,
         timestamp: DateTime.now(),
         status: statusStr,
         sender: ocrResult.walletType,
         message: ocrResult.rawText,
-        isScam: !isMatched,
-        threatLevel: isMatched ? 'LOW' : 'HIGH',
+        isScam: ocrResult.isScam,
+        threatLevel: ocrResult.threatLevel,
       );
 
       setState(() {

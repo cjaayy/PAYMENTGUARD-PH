@@ -133,6 +133,7 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
     final amount = ocrResult.amount;
     final referenceNo = ocrResult.referenceNo;
     final walletType = ocrResult.walletType;
+    final provider = ocrResult.provider;
 
     bool isMatchedWithSms = false;
 
@@ -166,14 +167,16 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
       }
     }
 
-    final String status = isMatchedWithSms
-        ? 'VERIFIED (MATCHED WITH SMS)'
-        : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)';
+    final bool isScam = ocrResult.isScam;
+    final String threatLevel = ocrResult.threatLevel;
 
-    final bool isScam = !isMatchedWithSms;
-    final String threatLevel = isMatchedWithSms ? 'LOW' : 'HIGH';
+    final String status = isScam
+        ? 'SCAM_FLAGGED (PHISHING LINK DETECTED)'
+        : (isMatchedWithSms
+            ? 'VERIFIED (MATCHED WITH SMS)'
+            : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)');
 
-    // 1. Sync document to Cloud Firestore `transactions` collection
+    // 1. Sync document to Cloud Firestore `transactions` collection with auto-detected provider
     try {
       await FirebaseFirestore.instance.collection('transactions').add({
         'sender': senderName,
@@ -182,21 +185,27 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
         'reference_no': referenceNo ?? 'NO_REF',
         'ref_number': referenceNo ?? 'NO_REF',
         'sender_name': senderName,
-        'source': walletType,
+        'provider': provider,
+        'source': provider,
         'method': 'OCR',
         'isScam': isScam,
         'threatLevel': threatLevel,
         'status': status,
         'timestamp': FieldValue.serverTimestamp(),
       });
-      debugPrint('[OcrScannerScreen] Saved OCR transaction to Firestore (status: $status).');
+      debugPrint('[OcrScannerScreen] Saved OCR transaction to Firestore (provider: $provider, status: $status).');
     } catch (e) {
       debugPrint('[OcrScannerScreen] Firestore write warning: $e');
     }
 
-    // 2. Trigger Tagalog Voice Alert
+    // 2. Trigger English Voice Alert with auto-detected provider
     if (isMatchedWithSms) {
-      await _voiceAlert.speakOcrMatchedAlert(senderName: senderName, amount: amount);
+      await _voiceAlert.speakOcrMatchedAlert(
+        refNumber: referenceNo,
+        amount: amount,
+        senderName: senderName,
+        provider: provider,
+      );
     } else {
       await _voiceAlert.speakOcrUnverifiedWarning(refNumber: referenceNo);
     }
@@ -207,10 +216,14 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
       amount: amount,
       referenceNo: referenceNo,
       sender: senderName,
-      walletType: walletType,
+      provider: provider,
       rawText: rawText,
-      isValid: isMatchedWithSms,
-      errorMessage: isMatchedWithSms ? null : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)',
+      isValid: ocrResult.isValid,
+      isScam: isScam,
+      threatLevel: threatLevel,
+      errorMessage: isScam
+          ? 'PHISHING LINK DETECTED'
+          : (isMatchedWithSms ? null : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)'),
     );
 
     // 3. Return parsed result to previous screen
