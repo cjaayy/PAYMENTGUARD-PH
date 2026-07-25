@@ -65,6 +65,24 @@ class VoiceAlertService {
     await _flutterTts.speak(text);
   }
 
+  /// Triggers a Tagalog voice announcement when an e-wallet receipt is verified via Camera OCR Scanner.
+  /// Example audio: "Naka-scan ng resibo mula kay Juan D. para sa limandaang piso."
+  Future<void> speakOcrReceiptAlert({
+    required String senderName,
+    required double? amount,
+  }) async {
+    await init();
+
+    final amountText = _formatAmountInTagalog(amount);
+    final text = _activeLanguage.startsWith('tl')
+        ? 'Naka-scan ng resibo mula kay $senderName para sa $amountText.'
+        : 'Scanned receipt from $senderName for $amountText.';
+
+    debugPrint('[VoiceAlertService] Speaking OCR receipt alert: "$text"');
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
+  }
+
   /// Triggers an urgent Tagalog voice warning when a phishing / scam SMS is detected.
   /// Spoken text: "Babala! Ang natanggap mong mensahe ay naglalaman ng kahina-hinalang link. Huwag mag-click."
   Future<void> speakScamWarningAlert() async {

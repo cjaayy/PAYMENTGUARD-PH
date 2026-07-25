@@ -23,6 +23,10 @@ subprojects {
         val android = extensions.findByType(com.android.build.gradle.LibraryExtension::class.java)
         android?.compileSdk = 36
         android?.buildToolsVersion = "36.0.0"
+
+        project.dependencies.add("compileOnly", "androidx.concurrent:concurrent-futures:1.2.0")
+        project.dependencies.add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
+        project.dependencies.add("implementation", "androidx.concurrent:concurrent-futures-ktx:1.2.0")
     }
 }
 

@@ -7,6 +7,8 @@ import '../models/transaction_model.dart';
 import '../services/duplicate_checker_service.dart';
 import '../services/transaction_processor.dart';
 import '../services/voice_alert_service.dart';
+import '../utils/ocr_receipt_parser.dart';
+import 'ocr_scanner_screen.dart';
 
 /// Mobile Home Screen designed for store cashiers using an Android phone at the counter.
 class MobileHomeScreen extends ConsumerStatefulWidget {
@@ -312,6 +314,45 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
     );
   }
 
+  /// Opens the Camera OCR Receipt Scanner screen.
+  Future<void> _openOcrScanner() async {
+    final ocrResult = await Navigator.push<OcrParsedResult>(
+      context,
+      MaterialPageRoute(builder: (_) => const OcrScannerScreen()),
+    );
+
+    if (ocrResult != null && mounted && ocrResult.isValid) {
+      final amountDisplay = ocrResult.amount != null ? '₱${ocrResult.amount!.toStringAsFixed(2)}' : 'Payment';
+      
+      final scannedTx = TransactionModel(
+        id: 'ocr_${DateTime.now().millisecondsSinceEpoch}',
+        merchantId: 'STORE_COUNTER_01',
+        amount: ocrResult.amount,
+        refNumber: ocrResult.referenceNo ?? 'NO_REF',
+        senderName: ocrResult.sender ?? 'JUAN D.',
+        source: ocrResult.walletType,
+        timestamp: DateTime.now(),
+        status: TransactionStatus.verified.value,
+        sender: ocrResult.walletType,
+        message: ocrResult.rawText,
+        isScam: false,
+        threatLevel: 'LOW',
+      );
+
+      setState(() {
+        _transactionsList.insert(0, scannedTx);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('📸 OCR VERIFIED: $amountDisplay from ${ocrResult.sender} (Ref #${ocrResult.referenceNo})'),
+          backgroundColor: Colors.green.shade800,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -336,18 +377,39 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.camera_alt_outlined, color: Color(0xFF00E676)),
+            tooltip: 'Scan Receipt (OCR)',
+            onPressed: _openOcrScanner,
+          ),
+          IconButton(
             icon: const Icon(Icons.volume_up_outlined),
             tooltip: 'Test Tagalog Voice',
             onPressed: () => _voiceAlert.speakPaymentReceived(amount: 150.00, senderName: 'JUAN DELA CRUZ'),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showDevSimulatorModal,
-        backgroundColor: const Color(0xFF00E676),
-        foregroundColor: Colors.black,
-        icon: const Icon(Icons.bug_report),
-        label: const Text('Simulate Test SMS', style: TextStyle(fontWeight: FontWeight.bold)),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'ocr_scanner_fab',
+            onPressed: _openOcrScanner,
+            backgroundColor: const Color(0xFF00E676),
+            foregroundColor: Colors.black,
+            icon: const Icon(Icons.camera_alt),
+            label: const Text('Scan Receipt (OCR)', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.extended(
+            heroTag: 'test_sms_fab',
+            onPressed: _showDevSimulatorModal,
+            backgroundColor: const Color(0xFF1E293B),
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.bug_report, color: Color(0xFF00E676)),
+            label: const Text('Simulate Test SMS', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
