@@ -18,11 +18,13 @@ void main() async {
 
   // 2. Initialize Firebase with current platform options
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
   } catch (e) {
-    debugPrint('Firebase initialization warning: $e');
+    debugPrint('Firebase initialization error: $e');
   }
 
   runApp(

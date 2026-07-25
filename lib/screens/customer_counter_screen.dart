@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/transaction_model.dart';
@@ -148,89 +150,289 @@ class _CustomerCounterViewState extends State<CustomerCounterView> {
     );
   }
 
-  /// 1. DEFAULT IDLE STATE: "Waiting for Payment..."
+  /// Stream builder for Store User Profile (Retrieves QR code Base64/URLs).
+  Stream<DocumentSnapshot<Map<String, dynamic>>?> _getStoreUserStream() {
+    try {
+      if (Firebase.apps.isEmpty) return Stream.value(null);
+      final String? uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null || uid.isEmpty) return Stream.value(null);
+      return FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
+    } catch (_) {
+      return Stream.value(null);
+    }
+  }
+
+  /// 1. DEFAULT IDLE STATE: "Scan to Pay via GCash / Maya / MariBank" with Dynamic Store QR Codes
   Widget _buildIdleWaitingState() {
-    return Center(
-      key: const ValueKey('idle_state'),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 700),
-          padding: const EdgeInsets.all(40),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E293B),
-            borderRadius: BorderRadius.circular(32),
-            border: Border.all(color: const Color(0xFF334155), width: 1.5),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.3),
-                blurRadius: 30,
-                spreadRadius: 4,
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Pulse/Listening Animation Indicator
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  Container(
-                    width: 140,
-                    height: 140,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF00E676).withValues(alpha: 0.08),
-                    ),
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>?>(
+      stream: _getStoreUserStream(),
+      builder: (context, userSnapshot) {
+        String? gcashQrData;
+        String? mayaQrData;
+        String? maribankQrData;
+
+        if (userSnapshot.hasData && userSnapshot.data != null && userSnapshot.data!.exists) {
+          final data = userSnapshot.data!.data();
+          if (data != null) {
+            gcashQrData = data['gcash_qr_base64']?.toString().trim() ?? data['gcash_qr_url']?.toString().trim();
+            mayaQrData = data['maya_qr_base64']?.toString().trim() ?? data['maya_qr_url']?.toString().trim();
+            maribankQrData = data['maribank_qr_base64']?.toString().trim() ?? data['maribank_qr_url']?.toString().trim();
+
+            if (gcashQrData != null && gcashQrData.isEmpty) gcashQrData = null;
+            if (mayaQrData != null && mayaQrData.isEmpty) mayaQrData = null;
+            if (maribankQrData != null && maribankQrData.isEmpty) maribankQrData = null;
+          }
+        }
+
+        final bool hasQrCodes = (gcashQrData != null) || (mayaQrData != null) || (maribankQrData != null);
+
+        return Center(
+          key: const ValueKey('idle_state'),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 900),
+              padding: const EdgeInsets.all(36),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(32),
+                border: Border.all(color: const Color(0xFF334155), width: 1.5),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.3),
+                    blurRadius: 30,
+                    spreadRadius: 4,
                   ),
-                  Container(
-                    width: 100,
-                    height: 100,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF00E676).withValues(alpha: 0.15),
-                    ),
-                  ),
-                  const Icon(Icons.qr_code_scanner, size: 56, color: Color(0xFF00E676)),
                 ],
               ),
-              const SizedBox(height: 32),
-              const Text(
-                'Waiting for Payment...',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Scan QR Code to pay via GCash, Maya, or MariBank',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: Colors.grey),
-              ),
-              const SizedBox(height: 36),
-              const Divider(color: Color(0xFF334155)),
-              const SizedBox(height: 24),
-              // Supported Providers Badges
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildProviderBadge('GCash', const Color(0xFF005CE6)),
-                  const SizedBox(width: 12),
-                  _buildProviderBadge('Maya', const Color(0xFF00D68F)),
-                  const SizedBox(width: 12),
-                  _buildProviderBadge('MariBank', const Color(0xFFFF5722)),
+                  // Header Title
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00E676).withValues(alpha: 0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.qr_code_2, size: 36, color: Color(0xFF00E676)),
+                      ),
+                      const SizedBox(width: 14),
+                      const Text(
+                        'Scan to Pay via E-Wallet',
+                        style: TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Instant payment verification protected by PaymentGuard PH',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 28),
+
+                  // Dynamic QR Code Display Cards
+                  if (hasQrCodes)
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isNarrow = constraints.maxWidth < 700;
+                        final qrCards = [
+                          if (gcashQrData != null)
+                            _buildQrCodeCard('GCash QR Code', gcashQrData, const Color(0xFF005CE6)),
+                          if (mayaQrData != null)
+                            _buildQrCodeCard('Maya QR Code', mayaQrData, const Color(0xFF00D68F)),
+                          if (maribankQrData != null)
+                            _buildQrCodeCard('MariBank QR Code', maribankQrData, const Color(0xFFFF5722)),
+                        ];
+
+                        if (isNarrow) {
+                          return Column(children: qrCards.map((c) => Padding(padding: const EdgeInsets.only(bottom: 16), child: c)).toList());
+                        }
+
+                        return Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: qrCards.map((c) => Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: c))).toList(),
+                        );
+                      },
+                    )
+                  else ...[
+                    // Pulse/Listening Animation Fallback when QR URLs are not set
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Container(
+                          width: 130,
+                          height: 130,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFF00E676).withValues(alpha: 0.08),
+                          ),
+                        ),
+                        Container(
+                          width: 90,
+                          height: 90,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFF00E676).withValues(alpha: 0.15),
+                          ),
+                        ),
+                        const Icon(Icons.qr_code_scanner, size: 52, color: Color(0xFF00E676)),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Waiting for Payment...',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 28),
+                  const Divider(color: Color(0xFF334155)),
+                  const SizedBox(height: 20),
+                  // Supported Providers Badges
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildProviderBadge('GCash', const Color(0xFF005CE6)),
+                      const SizedBox(width: 12),
+                      _buildProviderBadge('Maya', const Color(0xFF00D68F)),
+                      const SizedBox(width: 12),
+                      _buildProviderBadge('MariBank', const Color(0xFFFF5722)),
+                    ],
+                  ),
                 ],
               ),
-            ],
+            ),
           ),
-        ),
+        );
+      },
+    );
+  }
+
+  Widget _buildQrCodeCard(String title, String qrData, Color brandColor) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: brandColor.withValues(alpha: 0.4), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: brandColor.withValues(alpha: 0.1),
+            blurRadius: 20,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(
+              color: brandColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: brandColor.withValues(alpha: 0.5)),
+            ),
+            child: Text(
+              title,
+              style: TextStyle(color: brandColor, fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(8),
+              child: _buildQrImageWidget(qrData),
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  Widget _buildQrImageWidget(String qrData) {
+    if (qrData.startsWith('http://') || qrData.startsWith('https://')) {
+      return Image.network(
+        qrData,
+        height: 220,
+        width: 220,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            height: 220,
+            width: 220,
+            color: Colors.grey.shade900,
+            child: const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.broken_image, size: 48, color: Colors.white38),
+                SizedBox(height: 8),
+                Text('Failed to load QR image', style: TextStyle(color: Colors.white38, fontSize: 11)),
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    try {
+      String cleanBase64 = qrData;
+      if (cleanBase64.contains(',')) {
+        cleanBase64 = cleanBase64.split(',').last;
+      }
+      final bytes = base64Decode(cleanBase64);
+      return Image.memory(
+        bytes,
+        height: 220,
+        width: 220,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            height: 220,
+            width: 220,
+            color: Colors.grey.shade900,
+            child: const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.broken_image, size: 48, color: Colors.white38),
+                SizedBox(height: 8),
+                Text('Failed to load QR image', style: TextStyle(color: Colors.white38, fontSize: 11)),
+              ],
+            ),
+          );
+        },
+      );
+    } catch (_) {
+      return Container(
+        height: 220,
+        width: 220,
+        color: Colors.grey.shade900,
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.broken_image, size: 48, color: Colors.white38),
+            SizedBox(height: 8),
+            Text('Invalid QR Image Data', style: TextStyle(color: Colors.white38, fontSize: 11)),
+          ],
+        ),
+      );
+    }
   }
 
   /// 2. TRANSACTION CONFIRMED STATE: Large GREEN "PAYMENT CONFIRMED!" Banner

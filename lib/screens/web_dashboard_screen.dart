@@ -1,10 +1,15 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 
+import '../firebase_options.dart';
 import '../models/transaction_model.dart';
 import '../services/pdf_report_service.dart';
 import '../utils/web_audio.dart';
@@ -483,6 +488,18 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     }
   }
 
+  Future<void> _showQrSettingsDialog() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return _QrUploadDialog(userId: user.uid);
+      },
+    );
+  }
+
   String _escapeCsv(String field) {
     if (field.contains(',') || field.contains('"') || field.contains('\n')) {
       final escaped = field.replaceAll('"', '""');
@@ -584,6 +601,18 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 _isMuted = !_isMuted;
               });
             },
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E293B),
+              foregroundColor: Colors.lightBlueAccent,
+              side: const BorderSide(color: Colors.lightBlueAccent, width: 1.5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: _showQrSettingsDialog,
+            icon: const Icon(Icons.qr_code, size: 18),
+            label: const Text('QR Settings', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
           const SizedBox(width: 8),
           ElevatedButton.icon(
@@ -1020,5 +1049,380 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         ),
       ),
     );
+  }
+}
+
+// =============================================================================
+// STORE QR CODE DIRECT FILE UPLOAD MODAL
+// =============================================================================
+
+class _QrUploadDialog extends StatefulWidget {
+  final String userId;
+  const _QrUploadDialog({required this.userId});
+
+  @override
+  State<_QrUploadDialog> createState() => _QrUploadDialogState();
+}
+
+class _QrUploadDialogState extends State<_QrUploadDialog> {
+  bool _isLoading = true;
+  bool _isUploadingGcash = false;
+  bool _isUploadingMaya = false;
+  bool _isUploadingMaribank = false;
+  String? _gcashData;
+  String? _mayaData;
+  String? _maribankData;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchCurrentUrls();
+  }
+
+  Future<void> _ensureFirebaseInitialized() async {
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
+    } catch (e) {
+      debugPrint('Firebase init check error: $e');
+    }
+  }
+
+  Future<void> _fetchCurrentUrls() async {
+    await _ensureFirebaseInitialized();
+    if (Firebase.apps.isEmpty) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(widget.userId).get();
+      if (doc.exists && doc.data() != null) {
+        final data = doc.data()!;
+        _gcashData = data['gcash_qr_base64']?.toString().trim() ?? data['gcash_qr_url']?.toString().trim();
+        _mayaData = data['maya_qr_base64']?.toString().trim() ?? data['maya_qr_url']?.toString().trim();
+        _maribankData = data['maribank_qr_base64']?.toString().trim() ?? data['maribank_qr_url']?.toString().trim();
+
+        if (_gcashData != null && _gcashData!.isEmpty) _gcashData = null;
+        if (_mayaData != null && _mayaData!.isEmpty) _mayaData = null;
+        if (_maribankData != null && _maribankData!.isEmpty) _maribankData = null;
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  Future<void> _uploadQrAsBase64(String providerKey, [String? userIdParam]) async {
+    await _ensureFirebaseInitialized();
+    if (Firebase.apps.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Firebase is not initialized. Please refresh the page.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Safely fallback to current logged-in Auth User ID
+    final String targetUserId = (userIdParam != null && userIdParam.isNotEmpty)
+        ? userIdParam
+        : (widget.userId.isNotEmpty ? widget.userId : (FirebaseAuth.instance.currentUser?.uid ?? ''));
+
+    if (targetUserId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Error: User not logged in. Please re-login.')),
+        );
+      }
+      return;
+    }
+
+    try {
+      final FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true, // Required for Web & Mobile to obtain file bytes
+      );
+
+      if (result == null || result.files.isEmpty || result.files.single.bytes == null) {
+        return;
+      }
+
+      final Uint8List fileBytes = result.files.single.bytes!;
+
+      setState(() {
+        if (providerKey == 'gcash') _isUploadingGcash = true;
+        if (providerKey == 'maya') _isUploadingMaya = true;
+        if (providerKey == 'maribank') _isUploadingMaribank = true;
+      });
+
+      // Convert raw image bytes to Base64 String (Zero Firebase Storage dependency!)
+      final String base64Image = base64Encode(fileBytes);
+
+      // Save directly in Firestore user profile
+      await FirebaseFirestore.instance.collection('users').doc(targetUserId).set({
+        '${providerKey}_qr_base64': base64Image,
+        'updated_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (mounted) {
+        setState(() {
+          if (providerKey == 'gcash') _gcashData = base64Image;
+          if (providerKey == 'maya') _mayaData = base64Image;
+          if (providerKey == 'maribank') _maribankData = base64Image;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ ${providerKey.toUpperCase()} QR code saved successfully!'),
+            backgroundColor: const Color(0xFF00E676),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Base64 Save Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save QR: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          if (providerKey == 'gcash') _isUploadingGcash = false;
+          if (providerKey == 'maya') _isUploadingMaya = false;
+          if (providerKey == 'maribank') _isUploadingMaribank = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _removeQrImage(String providerKey) async {
+    try {
+      await FirebaseFirestore.instance.collection('users').doc(widget.userId).set({
+        '${providerKey}_qr_base64': FieldValue.delete(),
+        '${providerKey}_qr_url': FieldValue.delete(),
+        'updated_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (mounted) {
+        setState(() {
+          if (providerKey == 'gcash') _gcashData = null;
+          if (providerKey == 'maya') _mayaData = null;
+          if (providerKey == 'maribank') _maribankData = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🗑️ ${providerKey.toUpperCase()} QR Code removed'),
+            backgroundColor: Colors.orangeAccent,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error removing QR image: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E293B),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      title: const Row(
+        children: [
+          Icon(Icons.qr_code_2, color: Color(0xFF00E676), size: 28),
+          SizedBox(width: 10),
+          Text('Store QR Code Settings', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        ],
+      ),
+      content: _isLoading
+          ? const SizedBox(
+              height: 200,
+              width: 480,
+              child: Center(child: CircularProgressIndicator(color: Color(0xFF00E676))),
+            )
+          : SingleChildScrollView(
+              child: SizedBox(
+                width: 500,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Upload store QR codes for GCash, Maya, and MariBank. Images are stored safely as Base64 strings directly in Firestore (No paid cloud storage required!).',
+                      style: TextStyle(color: Colors.grey, fontSize: 13),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // 1. GCash QR Code Upload Section
+                    _buildUploadCard(
+                      providerTitle: 'GCash QR Code',
+                      brandColor: const Color(0xFF005CE6),
+                      qrData: _gcashData,
+                      isUploading: _isUploadingGcash,
+                      onUploadPressed: () => _uploadQrAsBase64('gcash'),
+                      onRemovePressed: () => _removeQrImage('gcash'),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 2. Maya QR Code Upload Section
+                    _buildUploadCard(
+                      providerTitle: 'Maya QR Code',
+                      brandColor: const Color(0xFF00D68F),
+                      qrData: _mayaData,
+                      isUploading: _isUploadingMaya,
+                      onUploadPressed: () => _uploadQrAsBase64('maya'),
+                      onRemovePressed: () => _removeQrImage('maya'),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 3. MariBank QR Code Upload Section
+                    _buildUploadCard(
+                      providerTitle: 'MariBank QR Code',
+                      brandColor: const Color(0xFFFF5722),
+                      qrData: _maribankData,
+                      isUploading: _isUploadingMaribank,
+                      onUploadPressed: () => _uploadQrAsBase64('maribank'),
+                      onRemovePressed: () => _removeQrImage('maribank'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+      actions: [
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF00E676),
+            foregroundColor: Colors.black,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Done', style: TextStyle(fontWeight: FontWeight.bold)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUploadCard({
+    required String providerTitle,
+    required Color brandColor,
+    required String? qrData,
+    required bool isUploading,
+    required VoidCallback onUploadPressed,
+    required VoidCallback onRemovePressed,
+  }) {
+    final bool hasImage = qrData != null && qrData.isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: brandColor.withValues(alpha: 0.4), width: 1.5),
+      ),
+      child: Row(
+        children: [
+          // Preview Thumbnail (Renders Base64 or URL)
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: brandColor),
+            ),
+            child: isUploading
+                ? Center(child: CircularProgressIndicator(color: brandColor, strokeWidth: 2))
+                : hasImage
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: _buildQrThumbnail(qrData!),
+                      )
+                    : const Icon(Icons.qr_code, size: 40, color: Colors.grey),
+          ),
+          const SizedBox(width: 16),
+          // Details & Actions
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  providerTitle,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: brandColor),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  hasImage ? '✅ Active on Customer View' : 'No QR uploaded yet',
+                  style: TextStyle(fontSize: 12, color: hasImage ? Colors.greenAccent : Colors.grey),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: brandColor.withValues(alpha: 0.2),
+                        foregroundColor: brandColor,
+                        side: BorderSide(color: brandColor),
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: isUploading ? null : onUploadPressed,
+                      icon: const Icon(Icons.upload_file, size: 16),
+                      label: Text(hasImage ? 'Replace Image' : 'Upload QR Image', style: const TextStyle(fontSize: 12)),
+                    ),
+                    if (hasImage && !isUploading) ...[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                        tooltip: 'Remove QR Image',
+                        onPressed: onRemovePressed,
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQrThumbnail(String qrData) {
+    if (qrData.startsWith('http://') || qrData.startsWith('https://')) {
+      return Image.network(
+        qrData,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.grey),
+      );
+    }
+
+    try {
+      String cleanBase64 = qrData;
+      if (cleanBase64.contains(',')) {
+        cleanBase64 = cleanBase64.split(',').last;
+      }
+      final bytes = base64Decode(cleanBase64);
+      return Image.memory(
+        bytes,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.grey),
+      );
+    } catch (_) {
+      return const Icon(Icons.broken_image, color: Colors.grey);
+    }
   }
 }
