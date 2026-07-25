@@ -7,6 +7,7 @@ import 'package:printing/printing.dart';
 
 import '../models/transaction_model.dart';
 import '../services/pdf_report_service.dart';
+import '../utils/web_audio.dart';
 import '../utils/web_download.dart';
 import 'customer_counter_screen.dart';
 
@@ -20,9 +21,20 @@ class WebDashboardScreen extends StatefulWidget {
 
 class _WebDashboardScreenState extends State<WebDashboardScreen> {
   bool _isCustomerDisplayMode = false;
+  bool _isMuted = false;
+  String? _lastPlayedTxId;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   final currencyFormatter = NumberFormat.currency(locale: 'en_PH', symbol: '₱');
+
+  /// Plays POS success chime sound ("Ding-Dong!") unless audio is explicitly muted.
+  void _playChimeSound() {
+    if (_isMuted) {
+      debugPrint('Audio is muted. Skipping chime.');
+      return; // Stop execution if muted
+    }
+    playChimeSound();
+  }
 
   // Sample fallback mock stream for offline dev/testing when Firestore credentials are not configured yet
   final List<TransactionModel> _fallbackMockTxList = [
@@ -205,6 +217,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
         final rawTransactions = snapshot.data ?? _fallbackMockTxList;
         final transactions = _processAndDeduplicateTransactions(rawTransactions);
+
+        // Trigger POS Success Audio Chime ("Ding-Dong!") on New Legitimate Transaction Arrival
+        if (transactions.isNotEmpty) {
+          final latestTx = transactions.first;
+          if (_lastPlayedTxId != null && _lastPlayedTxId != latestTx.id && !latestTx.isScam) {
+            _playChimeSound();
+          }
+          _lastPlayedTxId = latestTx.id;
+        }
 
         // Apply Search Filter
         final filteredTransactions = transactions.where((tx) {
@@ -552,6 +573,19 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
           ),
         ),
         actions: [
+          IconButton(
+            icon: Icon(
+              _isMuted ? Icons.volume_off : Icons.volume_up,
+              color: _isMuted ? Colors.white54 : const Color(0xFF00E676),
+            ),
+            tooltip: _isMuted ? 'Unmute Sound' : 'Mute Sound',
+            onPressed: () {
+              setState(() {
+                _isMuted = !_isMuted;
+              });
+            },
+          ),
+          const SizedBox(width: 8),
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF1E293B),
