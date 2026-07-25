@@ -66,29 +66,33 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     ),
   ];
 
-  /// Process, filter out invalid/empty reference numbers, deduplicate by ref_number, and sort descending by timestamp.
+  /// Process, filter, deduplicate, and sort transactions.
+  /// ALWAYS allows scam/phishing alerts regardless of reference_no.
   List<TransactionModel> _processAndDeduplicateTransactions(List<TransactionModel> rawList) {
-    // 1. Filter out invalid or empty reference numbers ('NO_REF', 'N/A', empty)
+    // 1. Filter: ALWAYS allow scam alerts; for legitimate payments, require valid reference number
     final validTxList = rawList.where((tx) {
+      if (tx.isScam) return true; // ALWAYS allow scam alerts regardless of reference number!
       final ref = tx.refNumber.trim().toUpperCase();
-      if (ref.isEmpty || ref == 'NO_REF' || ref == 'N/A' || ref == 'NULL') {
-        return false;
-      }
-      return true;
+      return ref.isNotEmpty && ref != 'NO_REF' && ref != 'N/A' && ref != 'NULL';
     }).toList();
 
-    // 2. Deduplicate by reference number (keep verified/newest entry)
+    // 2. Deduplicate: Non-scam documents by refNumber; Scam documents by unique ID so phishing alerts are never merged
     final Map<String, TransactionModel> uniqueMap = {};
     for (final tx in validTxList) {
-      final key = tx.refNumber.trim().toUpperCase();
-      if (!uniqueMap.containsKey(key)) {
+      if (tx.isScam) {
+        final key = 'scam_${tx.id.isNotEmpty ? tx.id : tx.timestamp.millisecondsSinceEpoch}';
         uniqueMap[key] = tx;
       } else {
-        final existing = uniqueMap[key]!;
-        if (!existing.isVerified && tx.isVerified) {
+        final key = tx.refNumber.trim().toUpperCase();
+        if (!uniqueMap.containsKey(key)) {
           uniqueMap[key] = tx;
-        } else if (tx.timestamp.isAfter(existing.timestamp)) {
-          uniqueMap[key] = tx;
+        } else {
+          final existing = uniqueMap[key]!;
+          if (!existing.isVerified && tx.isVerified) {
+            uniqueMap[key] = tx;
+          } else if (tx.timestamp.isAfter(existing.timestamp)) {
+            uniqueMap[key] = tx;
+          }
         }
       }
     }
@@ -546,6 +550,112 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
 
                           final amountDisplay = tx.amount != null ? currencyFormatter.format(tx.amount) : 'N/A';
 
+                          // 3. SAFE SENDER DISPLAY EXTRACTION
+                          final String displaySender = tx.senderName.trim().isNotEmpty
+                              ? tx.senderName
+                              : (tx.sender.trim().isNotEmpty ? tx.sender : 'Unknown Sender');
+
+                          // 4. PROMINENT RED PHISHING SCAM ALERT CARD UI
+                          if (isScam) {
+                            return Container(
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: Colors.red.shade900.withValues(alpha: 0.25),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: Colors.red.shade400, width: 2.0),
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  CircleAvatar(
+                                    backgroundColor: Colors.red.withValues(alpha: 0.25),
+                                    child: const Icon(Icons.gpp_bad, color: Colors.redAccent),
+                                  ),
+                                  const SizedBox(width: 14),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                              decoration: BoxDecoration(
+                                                color: Colors.red.shade900,
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: const Text(
+                                                '🚨 PHISHING ALERT DETECTED',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                  letterSpacing: 0.5,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: Colors.red.withValues(alpha: 0.2),
+                                                borderRadius: BorderRadius.circular(4),
+                                                border: Border.all(color: Colors.red, width: 0.8),
+                                              ),
+                                              child: Text(
+                                                'THREAT: $threatLevel',
+                                                style: const TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.redAccent,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          'Sender: $displaySender (${tx.provider.isNotEmpty ? tx.provider : tx.source})',
+                                          style: const TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.redAccent,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Time: ${DateFormat('MMM dd, yyyy - hh:mm a').format(tx.timestamp)}',
+                                          style: TextStyle(fontSize: 12, color: Colors.red.shade200),
+                                        ),
+                                        if (tx.message.isNotEmpty) ...[
+                                          const SizedBox(height: 6),
+                                          Container(
+                                            padding: const EdgeInsets.all(10),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFF0F172A),
+                                              borderRadius: BorderRadius.circular(8),
+                                              border: Border.all(color: Colors.red.shade900),
+                                            ),
+                                            child: Text(
+                                              'Payload Message: "${tx.message}"',
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.white70,
+                                                fontStyle: FontStyle.italic,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+
+                          // Standard Verified / Pending Payment Card
                           return ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                             leading: CircleAvatar(
@@ -556,13 +666,13 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               children: [
                                 Flexible(
                                   child: Text(
-                                    tx.senderName,
+                                    displaySender,
                                     overflow: TextOverflow.ellipsis,
                                     maxLines: 1,
-                                    style: TextStyle(
+                                    style: const TextStyle(
                                       fontWeight: FontWeight.bold,
                                       fontSize: 16,
-                                      color: isScam ? Colors.redAccent : Colors.white,
+                                      color: Colors.white,
                                     ),
                                   ),
                                 ),
@@ -578,26 +688,6 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
                                   ),
                                 ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: isScam ? Colors.red.withValues(alpha: 0.2) : Colors.green.withValues(alpha: 0.2),
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: isScam ? Colors.red : Colors.green,
-                                      width: 0.8,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    'THREAT: $threatLevel',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: isScam ? Colors.redAccent : Colors.greenAccent,
-                                    ),
-                                  ),
-                                ),
                               ],
                             ),
                             subtitle: Column(
@@ -605,12 +695,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                               children: [
                                 const SizedBox(height: 2),
                                 Text(
-                                  isScam
-                                      ? '⚠️ Phishing Link Alert • ${DateFormat('MMM dd, yyyy - hh:mm a').format(tx.timestamp)}'
-                                      : 'Ref No: ${tx.refNumber} • ${DateFormat('MMM dd, yyyy - hh:mm a').format(tx.timestamp)}',
+                                  'Ref No: ${tx.refNumber} • ${DateFormat('MMM dd, yyyy - hh:mm a').format(tx.timestamp)}',
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: isScam ? Colors.red.shade200 : Colors.grey.shade400,
+                                    color: Colors.grey.shade400,
                                   ),
                                 ),
                                 if (tx.message.isNotEmpty) ...[
@@ -637,7 +725,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   ),
                                 ),
                                 Text(
-                                  isScam ? 'SCAM_FLAGGED' : tx.status,
+                                  tx.status,
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,

@@ -132,6 +132,13 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
         final amountDisplay = processedTx.amount != null ? '₱${processedTx.amount!.toStringAsFixed(2)}' : 'Payment';
         snackbarText = '✅ VERIFIED: $amountDisplay from ${processedTx.senderName}';
         snackbarColor = Colors.green.shade800;
+
+        // Automatically trigger TTS voice alert announcing amount and payer name
+        _voiceAlert.speakPaymentReceived(
+          amount: processedTx.amount,
+          senderName: processedTx.senderName,
+          refNumber: processedTx.refNumber,
+        );
       } else {
         snackbarText = '⚠️ DUPLICATE REJECTED: Ref #${processedTx.refNumber}';
         snackbarColor = Colors.orange.shade900;

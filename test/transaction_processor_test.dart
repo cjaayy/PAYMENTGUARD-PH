@@ -24,7 +24,7 @@ class MockVoiceAlertService extends VoiceAlertService {
   }
 
   @override
-  Future<void> speakPaymentReceived({required double amount, required String senderName, String? refNumber}) async {
+  Future<void> speakPaymentReceived({double? amount, String? senderName, String? refNumber}) async {
     paymentAlertSpoken = true;
     lastSpokenText = 'Received $amount pesos from $senderName. Reference number $refNumber.';
   }

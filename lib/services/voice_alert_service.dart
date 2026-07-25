@@ -38,7 +38,7 @@ class VoiceAlertService {
   }
 
   /// For Legit Incoming SMS:
-  /// "Received [Amount] pesos via [Provider]. Reference number [Formatted_RefNo]."
+  /// "Payment received: [Amount] pesos from [SenderName]. Reference number [Formatted_RefNo]."
   Future<void> speakLegitPaymentAlert({
     required double? amount,
     required String senderName,
@@ -47,10 +47,19 @@ class VoiceAlertService {
   }) async {
     await init();
 
-    final amountText = _formatAmount(amount);
-    final formattedRef = formatRefForSpeech(refNumber);
-    final providerText = (provider != null && provider.isNotEmpty) ? provider : 'GCash';
-    final text = 'Received $amountText pesos via $providerText. Reference number $formattedRef.';
+    final double amt = amount ?? 0.0;
+    final String amountText = _formatAmount(amt);
+    final String formattedRef = formatRefForSpeech(refNumber);
+    final String sender = (senderName.trim().isNotEmpty &&
+            senderName.trim().toLowerCase() != 'unknown' &&
+            senderName.trim().toLowerCase() != 'unknown sender' &&
+            senderName.trim().toLowerCase() != 'suspicious sender')
+        ? senderName.trim()
+        : '';
+
+    final String text = sender.isNotEmpty
+        ? 'Payment received: $amountText pesos from $sender. Reference number $formattedRef.'
+        : 'Payment received: $amountText pesos. Reference number $formattedRef.';
 
     debugPrint('[VoiceAlertService] Speaking legit payment alert: "$text"');
     await _flutterTts.stop();
@@ -104,17 +113,33 @@ class VoiceAlertService {
     await _flutterTts.speak(text);
   }
 
-  /// Helper for legacy callers
+  /// Speaks payment received alert announcing amount AND sender name dynamically.
+  /// If senderName is available: "Payment received: [Amount] pesos from [SenderName]."
+  /// If senderName is missing/empty/Unknown: "Payment received: [Amount] pesos."
   Future<void> speakPaymentReceived({
-    required double amount,
-    required String senderName,
+    required double? amount,
+    String? senderName,
     String? refNumber,
   }) async {
-    await speakLegitPaymentAlert(
-      amount: amount,
-      senderName: senderName,
-      refNumber: refNumber ?? 'NO_REF',
-    );
+    await init();
+
+    final double amt = amount ?? 0.0;
+    final String amountText = _formatAmount(amt);
+    final String sender = (senderName != null &&
+            senderName.trim().isNotEmpty &&
+            senderName.trim().toLowerCase() != 'unknown' &&
+            senderName.trim().toLowerCase() != 'unknown sender' &&
+            senderName.trim().toLowerCase() != 'suspicious sender')
+        ? senderName.trim()
+        : '';
+
+    final String text = sender.isNotEmpty
+        ? 'Payment received: $amountText pesos from $sender.'
+        : 'Payment received: $amountText pesos.';
+
+    debugPrint('[VoiceAlertService] Speaking payment received: "$text"');
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
   }
 
   /// High-priority warning when a duplicate reference number occurs.
