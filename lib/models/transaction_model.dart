@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 /// Status of the payment transaction verification.
 enum TransactionStatus {
@@ -38,6 +39,7 @@ enum PaymentSource {
 class TransactionModel {
   final String id;
   final String merchantId;
+  final String? storeId; // Merchant Store UID for SaaS multi-tenant isolation
   final double? amount;
   final String refNumber;
   final String senderName;
@@ -53,6 +55,7 @@ class TransactionModel {
   const TransactionModel({
     required this.id,
     required this.merchantId,
+    this.storeId,
     this.amount,
     required this.refNumber,
     required this.senderName,
@@ -88,12 +91,20 @@ class TransactionModel {
     final String providerVal = (map['provider'] as String?) ?? (map['source'] as String?) ?? (map['sender'] as String?) ?? 'Unknown Provider';
     final String senderVal = (map['sender'] as String?) ?? providerVal;
     final String messageVal = (map['message'] as String?) ?? '';
+    final String? storeIdVal = (map['store_id'] as String?) ?? (map['storeId'] as String?);
+
+    final String refNumberVal = (map['reference_no'] as String?) ??
+        (map['refNumber'] as String?) ??
+        (map['ref_number'] as String?) ??
+        (map['ref_no'] as String?) ??
+        '';
 
     return TransactionModel(
       id: id ?? (map['id'] as String?) ?? '',
       merchantId: (map['merchant_id'] as String?) ?? '',
+      storeId: storeIdVal,
       amount: (map['amount'] as num?)?.toDouble(),
-      refNumber: (map['ref_number'] as String?) ?? '',
+      refNumber: refNumberVal,
       senderName: (map['sender_name'] as String?) ?? (isScamVal ? 'SUSPICIOUS SENDER' : 'UNKNOWN SENDER'),
       source: providerVal,
       provider: providerVal,
@@ -118,9 +129,11 @@ class TransactionModel {
   /// Converts the [TransactionModel] instance to a Map suitable for Cloud Firestore writes.
   /// Uses FieldValue.serverTimestamp() when [useServerTimestamp] is true.
   Map<String, dynamic> toMap({bool useServerTimestamp = false}) {
+    final String? activeStoreId = storeId ?? FirebaseAuth.instance.currentUser?.uid;
     return {
       'id': id,
       'merchant_id': merchantId,
+      'store_id': activeStoreId,
       'amount': amount,
       'ref_number': refNumber,
       'reference_no': refNumber,

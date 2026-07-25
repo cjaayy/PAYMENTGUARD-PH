@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -65,29 +66,137 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     ),
   ];
 
-  /// Safe Firestore stream builder that falls back to mock data if Firestore is uninitialized or empty.
-  Stream<List<TransactionModel>> _getTransactionsStream() {
-    try {
-      return FirebaseFirestore.instance
-          .collection('transactions')
-          .orderBy('timestamp', descending: true)
-          .snapshots()
-          .map((snapshot) {
-        if (snapshot.docs.isEmpty) return _fallbackMockTxList;
-        return snapshot.docs.map((doc) => TransactionModel.fromFirestore(doc)).toList();
-      });
-    } catch (_) {
-      // Fallback Stream for dev mode
-      return Stream.value(_fallbackMockTxList);
+  /// Process, filter out invalid/empty reference numbers, deduplicate by ref_number, and sort descending by timestamp.
+  List<TransactionModel> _processAndDeduplicateTransactions(List<TransactionModel> rawList) {
+    // 1. Filter out invalid or empty reference numbers ('NO_REF', 'N/A', empty)
+    final validTxList = rawList.where((tx) {
+      final ref = tx.refNumber.trim().toUpperCase();
+      if (ref.isEmpty || ref == 'NO_REF' || ref == 'N/A' || ref == 'NULL') {
+        return false;
+      }
+      return true;
+    }).toList();
+
+    // 2. Deduplicate by reference number (keep verified/newest entry)
+    final Map<String, TransactionModel> uniqueMap = {};
+    for (final tx in validTxList) {
+      final key = tx.refNumber.trim().toUpperCase();
+      if (!uniqueMap.containsKey(key)) {
+        uniqueMap[key] = tx;
+      } else {
+        final existing = uniqueMap[key]!;
+        if (!existing.isVerified && tx.isVerified) {
+          uniqueMap[key] = tx;
+        } else if (tx.timestamp.isAfter(existing.timestamp)) {
+          uniqueMap[key] = tx;
+        }
+      }
     }
+
+    // 3. Sort descending by latest timestamp
+    final List<TransactionModel> deduplicatedList = uniqueMap.values.toList();
+    deduplicatedList.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    return deduplicatedList;
+  }
+
+  /// Safe Firestore stream builder filtered by active store_id.
+  Stream<List<TransactionModel>> _getTransactionsStream() {
+    final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    debugPrint('WEB_AUTH_UID: $currentUserId');
+    print('WEB_AUTH_UID: $currentUserId');
+
+    final baseCollection = FirebaseFirestore.instance.collection('transactions');
+    Query<Map<String, dynamic>> query;
+    if (currentUserId != null && currentUserId.isNotEmpty) {
+      query = baseCollection.where('store_id', isEqualTo: currentUserId).orderBy('timestamp', descending: true);
+    } else {
+      query = baseCollection.orderBy('timestamp', descending: true);
+    }
+
+    return query.snapshots().map((snapshot) {
+      debugPrint('[WebDashboard] Stream updated: ${snapshot.docs.length} raw documents for store_id: $currentUserId');
+      if (snapshot.docs.isEmpty) return _processAndDeduplicateTransactions(_fallbackMockTxList);
+      final rawList = snapshot.docs.map((doc) => TransactionModel.fromFirestore(doc)).toList();
+      return _processAndDeduplicateTransactions(rawList);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    final String? webUid = FirebaseAuth.instance.currentUser?.uid;
+    debugPrint('WEB_AUTH_UID: $webUid');
+
     return StreamBuilder<List<TransactionModel>>(
       stream: _getTransactionsStream(),
       builder: (context, snapshot) {
-        final transactions = snapshot.data ?? _fallbackMockTxList;
+        // 1. STREAM ERROR VISIBILITY UI HANDLING
+        if (snapshot.hasError) {
+          final errorObj = snapshot.error;
+          debugPrint('[WebDashboardScreen] Firestore Stream Error: $errorObj');
+          print('WEB_STREAM_ERROR: $errorObj');
+
+          return Scaffold(
+            backgroundColor: const Color(0xFF0F172A),
+            appBar: AppBar(
+              backgroundColor: const Color(0xFF1E293B),
+              title: const Text('PaymentGuard PH - Stream Debug View'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.logout),
+                  onPressed: () async => await FirebaseAuth.instance.signOut(),
+                ),
+              ],
+            ),
+            body: Center(
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 700),
+                padding: const EdgeInsets.all(32),
+                margin: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade900.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.red.shade400, width: 2),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.error_outline, size: 64, color: Colors.redAccent),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'FIRESTORE STREAM ERROR DETECTED',
+                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.redAccent),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'WEB_AUTH_UID: ${webUid ?? "NULL / NOT LOGGED IN"}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white70),
+                    ),
+                    const SizedBox(height: 16),
+                    SelectableText(
+                      '$errorObj',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.red.shade200, fontSize: 13, height: 1.4),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.redAccent,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () => setState(() {}),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry Real-time Stream Query'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        final rawTransactions = snapshot.data ?? _fallbackMockTxList;
+        final transactions = _processAndDeduplicateTransactions(rawTransactions);
 
         // Apply Search Filter
         final filteredTransactions = transactions.where((tx) {
@@ -271,6 +380,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             onPressed: () => setState(() => _isCustomerDisplayMode = true),
             icon: const Icon(Icons.desktop_windows),
             label: const Text('Customer Counter View', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.white70),
+            tooltip: 'Logout Store',
+            onPressed: () async => await FirebaseAuth.instance.signOut(),
           ),
           const SizedBox(width: 16),
         ],

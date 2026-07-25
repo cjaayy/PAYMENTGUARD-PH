@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/transaction_model.dart';
@@ -41,15 +42,31 @@ class _CustomerCounterViewState extends State<CustomerCounterView> {
   }
 
   Stream<TransactionModel?> _getLatestTransactionStream() {
+    final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
     try {
-      return FirebaseFirestore.instance
-          .collection('transactions')
-          .orderBy('timestamp', descending: true)
-          .limit(1)
-          .snapshots()
-          .map((snapshot) {
+      final baseCollection = FirebaseFirestore.instance.collection('transactions');
+      Query<Map<String, dynamic>> query;
+      if (currentUserId != null && currentUserId.isNotEmpty) {
+        query = baseCollection.where('store_id', isEqualTo: currentUserId).orderBy('timestamp', descending: true).limit(1);
+      } else {
+        query = baseCollection.orderBy('timestamp', descending: true).limit(1);
+      }
+
+      return query.snapshots().map((snapshot) {
         if (snapshot.docs.isEmpty) return null;
-        return TransactionModel.fromFirestore(snapshot.docs.first);
+        final doc = snapshot.docs.first;
+        final data = doc.data();
+        final String rawRef = (data['reference_no'] as String?) ??
+            (data['refNumber'] as String?) ??
+            (data['ref_number'] as String?) ??
+            (data['ref_no'] as String?) ??
+            '';
+
+        final model = TransactionModel.fromFirestore(doc);
+        if (model.refNumber.isEmpty && rawRef.isNotEmpty) {
+          return model.copyWith(refNumber: rawRef);
+        }
+        return model;
       });
     } catch (_) {
       return Stream.value(null);
@@ -290,10 +307,32 @@ class _CustomerCounterViewState extends State<CustomerCounterView> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Ref No: ${tx.refNumber}',
-                      style: const TextStyle(fontSize: 16, color: Colors.grey),
+                    const SizedBox(height: 12),
+                    // Safe Reference Number Retrieval & High-Visibility Display Badge
+                    Builder(
+                      builder: (context) {
+                        final String refNumber = (tx.refNumber.trim().isNotEmpty && tx.refNumber.trim().toUpperCase() != 'NO_REF')
+                            ? tx.refNumber.trim()
+                            : 'N/A';
+
+                        return Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00E676).withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.5), width: 1.5),
+                          ),
+                          child: SelectableText(
+                            'Ref No: $refNumber',
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF00E676), // High contrast bright emerald green
+                              letterSpacing: 1.5,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),

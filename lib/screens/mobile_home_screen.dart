@@ -1,6 +1,8 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // 👈 IN-ADD ANG FIRESTORE
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 
@@ -32,6 +34,9 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
   void initState() {
     super.initState();
     _initServices();
+    final String? mobileUid = FirebaseAuth.instance.currentUser?.uid;
+    debugPrint('MOBILE_AUTH_UID: $mobileUid');
+    print('MOBILE_AUTH_UID: $mobileUid');
   }
 
   void _initServices() {
@@ -60,8 +65,20 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
         .length;
   }
 
-  /// Simulates processing an incoming SMS text alert.
+  /// Simulates processing an incoming SMS text alert AND syncs directly to Firestore.
   Future<void> _handleSimulatedSms(String smsText, {String? sourceHeader}) async {
+    final user = FirebaseAuth.instance.currentUser;
+    print('--------------------------------------------------');
+    print('🔍 DEBUG (SMS Trigger): Active User UID = ${user?.uid}');
+
+    if (user == null) {
+      print('❌ ERROR: Walang naka-login na user sa Mobile App!');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Error: No active store logged in.')),
+      );
+      return;
+    }
+
     if (!_isProtectionActive) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -72,15 +89,35 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
       return;
     }
 
+    // Process locally with processor
     final processedTx = await _transactionProcessor.processIncomingSms(
       smsText,
       senderHeader: sourceHeader,
-      merchantId: 'STORE_COUNTER_01',
+      merchantId: user.uid, // 👈 Dynamically pass user.uid
     );
 
     if (!mounted) return;
 
     if (processedTx != null) {
+      // 🚀 FIRESTORE DIRECT SAVE (Fixes Missing Web Sync Bug)
+      try {
+        print("🚀 Attempting to save transaction to Firestore...");
+        await FirebaseFirestore.instance.collection('transactions').add({
+          'store_id': user.uid, // 👈 Store ID binding
+          'sender': processedTx.provider.isNotEmpty ? processedTx.provider : sourceHeader ?? 'GCash',
+          'sender_name': processedTx.senderName,
+          'amount': processedTx.amount ?? 0.0,
+          'reference_no': processedTx.refNumber,
+          'isScam': processedTx.isScam,
+          'status': processedTx.status,
+          'message': smsText,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
+        print("✅ SUCCESS: Saved SMS transaction to Firestore for store: ${user.uid}");
+      } catch (e) {
+        print("❌ FIRESTORE WRITE ERROR (SMS): $e");
+      }
+
       setState(() {
         _transactionsList.insert(0, processedTx);
       });
@@ -117,6 +154,83 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
           backgroundColor: Colors.orange,
         ),
       );
+    }
+  }
+
+  /// Opens the Camera OCR Receipt Scanner screen AND syncs scan result to Firestore.
+  Future<void> _openOcrScanner() async {
+    final user = FirebaseAuth.instance.currentUser;
+
+    final ocrResult = await Navigator.push<OcrParsedResult>(
+      context,
+      MaterialPageRoute(builder: (_) => const OcrScannerScreen()),
+    );
+
+    if (ocrResult != null && mounted) {
+      final amountDisplay = ocrResult.amount != null ? '₱${ocrResult.amount!.toStringAsFixed(2)}' : 'Payment';
+      final bool isMatched = ocrResult.isValid;
+      final String statusStr = ocrResult.isScam
+          ? 'SCAM_FLAGGED (PHISHING LINK DETECTED)'
+          : (isMatched
+              ? 'VERIFIED (MATCHED WITH SMS)'
+              : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)');
+
+      final scannedTx = TransactionModel(
+        id: 'ocr_${DateTime.now().millisecondsSinceEpoch}',
+        merchantId: user?.uid ?? 'UNKNOWN_STORE',
+        amount: ocrResult.amount,
+        refNumber: ocrResult.referenceNo ?? 'NO_REF',
+        senderName: ocrResult.sender ?? 'GCash (Scanned)',
+        source: ocrResult.walletType,
+        timestamp: DateTime.now(),
+        status: statusStr,
+        sender: ocrResult.walletType,
+        message: ocrResult.rawText,
+        isScam: ocrResult.isScam,
+        threatLevel: ocrResult.threatLevel,
+      );
+
+      // 🚀 FIRESTORE DIRECT SAVE FOR OCR RECEIPT
+      if (user != null) {
+        try {
+          await FirebaseFirestore.instance.collection('transactions').add({
+            'store_id': user.uid,
+            'sender': ocrResult.walletType,
+            'sender_name': ocrResult.sender ?? '${ocrResult.walletType} (Scanned)',
+            'amount': ocrResult.amount ?? 0.0,
+            'reference_no': ocrResult.referenceNo ?? 'NO_REF',
+            'isScam': ocrResult.isScam,
+            'status': statusStr,
+            'message': ocrResult.rawText,
+            'timestamp': FieldValue.serverTimestamp(),
+          });
+          print("✅ SUCCESS: Saved OCR scan transaction to Firestore!");
+        } catch (e) {
+          print("❌ FIRESTORE WRITE ERROR (OCR): $e");
+        }
+      }
+
+      setState(() {
+        _transactionsList.insert(0, scannedTx);
+      });
+
+      if (isMatched) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📸 OCR VERIFIED (MATCHED SMS): $amountDisplay from ${ocrResult.sender}'),
+            backgroundColor: Colors.green.shade800,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⚠️ OCR UNVERIFIED: No matching SMS found for Ref #${ocrResult.referenceNo ?? "N/A"}'),
+            backgroundColor: Colors.red.shade900,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
@@ -284,7 +398,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                     final String smsPayload =
                         'MariBank: You received PHP $amountStr from PEDRO P. via MariBank transfer. Ref No: $randomRefNo.';
 
-                    _handleSimulatedSms(smsPayload, sourceHeader: 'MB');
+                    _handleSimulatedSms(smsPayload, sourceHeader: 'MariBank');
                   },
                 ),
               ),
@@ -405,61 +519,6 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
     );
   }
 
-  /// Opens the Camera OCR Receipt Scanner screen.
-  Future<void> _openOcrScanner() async {
-    final ocrResult = await Navigator.push<OcrParsedResult>(
-      context,
-      MaterialPageRoute(builder: (_) => const OcrScannerScreen()),
-    );
-
-    if (ocrResult != null && mounted) {
-      final amountDisplay = ocrResult.amount != null ? '₱${ocrResult.amount!.toStringAsFixed(2)}' : 'Payment';
-      final bool isMatched = ocrResult.isValid;
-      final String statusStr = ocrResult.isScam
-          ? 'SCAM_FLAGGED (PHISHING LINK DETECTED)'
-          : (isMatched
-              ? 'VERIFIED (MATCHED WITH SMS)'
-              : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)');
-
-      final scannedTx = TransactionModel(
-        id: 'ocr_${DateTime.now().millisecondsSinceEpoch}',
-        merchantId: 'STORE_COUNTER_01',
-        amount: ocrResult.amount,
-        refNumber: ocrResult.referenceNo ?? 'NO_REF',
-        senderName: ocrResult.sender ?? 'GCash (Scanned)',
-        source: ocrResult.walletType,
-        timestamp: DateTime.now(),
-        status: statusStr,
-        sender: ocrResult.walletType,
-        message: ocrResult.rawText,
-        isScam: ocrResult.isScam,
-        threatLevel: ocrResult.threatLevel,
-      );
-
-      setState(() {
-        _transactionsList.insert(0, scannedTx);
-      });
-
-      if (isMatched) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('📸 OCR VERIFIED (MATCHED SMS): $amountDisplay from ${ocrResult.sender}'),
-            backgroundColor: Colors.green.shade800,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('⚠️ OCR UNVERIFIED: No matching SMS found for Ref #${ocrResult.referenceNo ?? "N/A"}'),
-            backgroundColor: Colors.red.shade900,
-            duration: const Duration(seconds: 5),
-          ),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -490,8 +549,13 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.volume_up_outlined),
-            tooltip: 'Test Tagalog Voice',
+            tooltip: 'Test Voice Alert',
             onPressed: () => _voiceAlert.speakPaymentReceived(amount: 150.00, senderName: 'JUAN DELA CRUZ'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.white70),
+            tooltip: 'Logout Store',
+            onPressed: () async => await FirebaseAuth.instance.signOut(),
           ),
         ],
       ),
@@ -519,7 +583,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 120),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -702,61 +766,85 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                   final statusBadgeText = isScam ? 'SCAM_ALERT (HIGH)' : tx.status;
                   final amountDisplay = tx.amount != null ? currencyFormatter.format(tx.amount) : '₱0.00';
 
+                  final providerLabel = tx.provider.isNotEmpty ? tx.provider : tx.source;
+                  final String displaySender = (tx.senderName.contains('Scanned') || tx.senderName.toLowerCase().contains(providerLabel.toLowerCase()))
+                      ? tx.senderName
+                      : '${tx.senderName} ($providerLabel)';
+
                   return Card(
                     margin: const EdgeInsets.only(bottom: 10),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
                       side: BorderSide(color: cardBorderColor, width: isScam ? 1.5 : 1.0),
                     ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      leading: CircleAvatar(
-                        backgroundColor: iconColor.withValues(alpha: 0.15),
-                        child: Icon(iconData, color: iconColor),
-                      ),
-                      title: Text(
-                        '${tx.senderName} (${tx.source})',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: isScam ? Colors.redAccent : Colors.white,
-                        ),
-                      ),
-                      subtitle: Text(
-                        isScam
-                            ? '⚠️ Phishing Link Alert • ${DateFormat('hh:mm a').format(tx.timestamp)}'
-                            : 'Ref: ${tx.refNumber} • ${DateFormat('hh:mm a').format(tx.timestamp)}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: isScam ? Colors.red.shade200 : Colors.grey.shade400,
-                        ),
-                      ),
-                      trailing: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      child: Row(
                         children: [
-                          Text(
-                            amountDisplay,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: isVerified ? const Color(0xFF00E676) : Colors.redAccent,
+                          CircleAvatar(
+                            backgroundColor: iconColor.withValues(alpha: 0.15),
+                            child: Icon(iconData, color: iconColor),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  displaySender,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: isScam ? Colors.redAccent : Colors.white,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  isScam
+                                      ? '⚠️ Phishing Link Alert • ${DateFormat('hh:mm a').format(tx.timestamp)}'
+                                      : 'Ref: ${tx.refNumber} • ${DateFormat('hh:mm a').format(tx.timestamp)}',
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: isScam ? Colors.red.shade200 : Colors.grey.shade400,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 2),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: iconColor.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              statusBadgeText,
-                              style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                                color: iconColor,
+                          const SizedBox(width: 10),
+                          Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                amountDisplay,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: isVerified ? const Color(0xFF00E676) : Colors.redAccent,
+                                ),
                               ),
-                            ),
+                              const SizedBox(height: 2),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: iconColor.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  statusBadgeText,
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: iconColor,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),

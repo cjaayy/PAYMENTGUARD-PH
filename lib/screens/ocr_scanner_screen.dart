@@ -1,5 +1,6 @@
 import 'package:camera/camera.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
@@ -176,9 +177,11 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
             ? 'VERIFIED (MATCHED WITH SMS)'
             : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)');
 
-    // 1. Sync document to Cloud Firestore `transactions` collection with auto-detected provider
+    // 1. Sync document to Cloud Firestore `transactions` collection with auto-detected provider & store_id
     try {
+      final String? storeId = FirebaseAuth.instance.currentUser?.uid;
       await FirebaseFirestore.instance.collection('transactions').add({
+        'store_id': storeId,
         'sender': senderName,
         'message': rawText,
         'amount': amount,
@@ -193,7 +196,7 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
         'status': status,
         'timestamp': FieldValue.serverTimestamp(),
       });
-      debugPrint('[OcrScannerScreen] Saved OCR transaction to Firestore (provider: $provider, status: $status).');
+      debugPrint('[OcrScannerScreen] Saved OCR transaction to Firestore (store_id: $storeId, provider: $provider, status: $status).');
     } catch (e) {
       debugPrint('[OcrScannerScreen] Firestore write warning: $e');
     }
