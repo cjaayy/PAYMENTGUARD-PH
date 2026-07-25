@@ -22,6 +22,9 @@ class CustomerCounterView extends StatefulWidget {
 
 class _CustomerCounterViewState extends State<CustomerCounterView> {
   Timer? _resetTimer;
+  TransactionModel? _currentPayment;
+  String? _lastProcessedTxId;
+
   final currencyFormatter = NumberFormat.currency(locale: 'en_PH', symbol: '₱');
 
   @override
@@ -30,31 +33,58 @@ class _CustomerCounterViewState extends State<CustomerCounterView> {
     super.dispose();
   }
 
-  void _scheduleReset(int remainingSeconds) {
-    _resetTimer?.cancel();
-    if (remainingSeconds > 0) {
-      _resetTimer = Timer(Duration(seconds: remainingSeconds), () {
+  /// Listens for new non-scam transactions and manages 2-second auto-reset timer to Idle state.
+  void _processIncomingTransaction(TransactionModel? latestTx) {
+    if (latestTx == null) return;
+    if (latestTx.id == _lastProcessedTxId) return;
+
+    final diffInSeconds = DateTime.now().difference(latestTx.timestamp).inSeconds;
+
+    // Only process recent transactions (created within last 15s)
+    if (diffInSeconds >= 0 && diffInSeconds <= 15) {
+      _lastProcessedTxId = latestTx.id;
+      _currentPayment = latestTx;
+
+      _resetTimer?.cancel();
+
+      // Duplicate warning displayed for 3 seconds; Verified payment displayed for 2 seconds.
+      final int displaySeconds = (latestTx.isDuplicate || latestTx.status == TransactionStatus.duplicateRejected.value) ? 3 : 2;
+
+      _resetTimer = Timer(Duration(seconds: displaySeconds), () {
         if (mounted) {
-          setState(() {}); // Trigger rebuild to revert to Idle State after 15s
+          setState(() {
+            _currentPayment = null; // Auto-resets screen back to Idle
+          });
         }
       });
     }
   }
 
+  /// Stream builder that strictly EXCLUDES phishing/scam alerts from Counter View.
   Stream<TransactionModel?> _getLatestTransactionStream() {
     final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
     try {
       final baseCollection = FirebaseFirestore.instance.collection('transactions');
       Query<Map<String, dynamic>> query;
       if (currentUserId != null && currentUserId.isNotEmpty) {
-        query = baseCollection.where('store_id', isEqualTo: currentUserId).orderBy('timestamp', descending: true).limit(1);
+        query = baseCollection.where('store_id', isEqualTo: currentUserId).orderBy('timestamp', descending: true).limit(10);
       } else {
-        query = baseCollection.orderBy('timestamp', descending: true).limit(1);
+        query = baseCollection.orderBy('timestamp', descending: true).limit(10);
       }
 
       return query.snapshots().map((snapshot) {
         if (snapshot.docs.isEmpty) return null;
-        final doc = snapshot.docs.first;
+
+        // 1. EXCLUDE PHISHING / SCAM ALERTS FROM COUNTER VIEW
+        final nonScamDocs = snapshot.docs.where((doc) {
+          final data = doc.data();
+          final bool isScam = (data['isScam'] == true) || (data['is_scam'] == true);
+          return !isScam;
+        }).toList();
+
+        if (nonScamDocs.isEmpty) return null;
+
+        final doc = nonScamDocs.first;
         final data = doc.data();
         final String rawRef = (data['reference_no'] as String?) ??
             (data['refNumber'] as String?) ??
@@ -96,21 +126,22 @@ class _CustomerCounterViewState extends State<CustomerCounterView> {
         stream: _getLatestTransactionStream(),
         builder: (context, snapshot) {
           final latestTx = snapshot.data;
+          _processIncomingTransaction(latestTx);
 
-          bool isRecent = false;
-          if (latestTx != null && latestTx.isVerified && !latestTx.isScam) {
-            final diffInSeconds = DateTime.now().difference(latestTx.timestamp).inSeconds;
-            if (diffInSeconds >= 0 && diffInSeconds <= 15) {
-              isRecent = true;
-              _scheduleReset(15 - diffInSeconds);
+          Widget activeView;
+          if (_currentPayment != null) {
+            if (_currentPayment!.isDuplicate || _currentPayment!.status == TransactionStatus.duplicateRejected.value) {
+              activeView = _buildDuplicateWarningState(_currentPayment!);
+            } else {
+              activeView = _buildConfirmedBannerState(_currentPayment!);
             }
+          } else {
+            activeView = _buildIdleWaitingState();
           }
 
           return AnimatedSwitcher(
             duration: const Duration(milliseconds: 500),
-            child: isRecent && latestTx != null
-                ? _buildConfirmedBannerState(latestTx)
-                : _buildIdleWaitingState(),
+            child: activeView,
           );
         },
       ),
@@ -335,6 +366,79 @@ class _CustomerCounterViewState extends State<CustomerCounterView> {
                       },
                     ),
                   ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 3. DUPLICATE PAYMENT WARNING STATE: Orange/Red Alert Banner
+  Widget _buildDuplicateWarningState(TransactionModel tx) {
+    final String refNumber = (tx.refNumber.trim().isNotEmpty && tx.refNumber.trim().toUpperCase() != 'NO_REF')
+        ? tx.refNumber.trim()
+        : 'N/A';
+
+    return Center(
+      key: const ValueKey('duplicate_warning_state'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 750),
+          padding: const EdgeInsets.all(40),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E293B),
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.orange.withValues(alpha: 0.3),
+                blurRadius: 50,
+                spreadRadius: 10,
+              ),
+            ],
+            border: Border.all(color: Colors.orangeAccent, width: 3),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.18),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.warning_amber_rounded, size: 96, color: Colors.orangeAccent),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                '⚠️ DUPLICATE PAYMENT DETECTED',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.5,
+                  color: Colors.orangeAccent,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Reference No: $refNumber has already been processed!',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 18, color: Colors.white70, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.5), width: 1.5),
+                ),
+                child: const Text(
+                  'Transaction Rejected • Duplicate Prevented',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.orangeAccent),
                 ),
               ),
             ],

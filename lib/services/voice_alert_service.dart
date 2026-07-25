@@ -148,13 +148,13 @@ class VoiceAlertService {
 
     String text;
     if (sender.isNotEmpty && formattedRef.isNotEmpty) {
-      text = 'Payment received: $amountText pesos from $sender. Reference number $formattedRef.';
+      text = 'Payment received: $amountText pesos from $sender. Reference number $formattedRef. Thank you!';
     } else if (sender.isNotEmpty) {
-      text = 'Payment received: $amountText pesos from $sender.';
+      text = 'Payment received: $amountText pesos from $sender. Thank you!';
     } else if (formattedRef.isNotEmpty) {
-      text = 'Payment received: $amountText pesos. Reference number $formattedRef.';
+      text = 'Payment received: $amountText pesos. Reference number $formattedRef. Thank you!';
     } else {
-      text = 'Payment received: $amountText pesos.';
+      text = 'Payment received: $amountText pesos. Thank you!';
     }
 
     debugPrint('[VoiceAlertService] Speaking payment received: "$text"');
