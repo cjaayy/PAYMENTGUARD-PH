@@ -11,9 +11,10 @@ import 'services/duplicate_checker_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialize Hive for local offline duplicate reference number checks
+  // 1. Initialize Hive for local offline duplicate reference number checks & settings
   await Hive.initFlutter();
   await Hive.openBox<String>(kVerifiedRefNumbersBox);
+  await Hive.openBox('app_settings');
 
   // 2. Initialize Firebase with current platform options
   try {

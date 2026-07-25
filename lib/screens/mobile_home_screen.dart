@@ -2,9 +2,10 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // 👈 IN-ADD ANG FIRESTORE
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/transaction_model.dart';
 import '../services/duplicate_checker_service.dart';
@@ -21,22 +22,118 @@ class MobileHomeScreen extends ConsumerStatefulWidget {
   ConsumerState<MobileHomeScreen> createState() => _MobileHomeScreenState();
 }
 
-class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
+class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with WidgetsBindingObserver {
   bool _isProtectionActive = true;
   late DuplicateCheckerService _duplicateChecker;
   late VoiceAlertService _voiceAlert;
   late TransactionProcessor _transactionProcessor;
-  
+
+  // Setup & Permissions Checker States
+  bool _smsGranted = false;
+  bool _notificationGranted = false;
+  bool _batteryOptDisabled = false;
+  bool _isCheckingPermissions = true;
+  bool _isBannerDismissed = false;
+
   final List<TransactionModel> _transactionsList = [];
   final currencyFormatter = NumberFormat.currency(locale: 'en_PH', symbol: '₱');
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initServices();
+    _loadDismissedState();
+    _checkPermissions();
     final String? mobileUid = FirebaseAuth.instance.currentUser?.uid;
     debugPrint('MOBILE_AUTH_UID: $mobileUid');
     print('MOBILE_AUTH_UID: $mobileUid');
+  }
+
+  Future<void> _loadDismissedState() async {
+    try {
+      final box = Hive.isBoxOpen('app_settings') ? Hive.box('app_settings') : await Hive.openBox('app_settings');
+      if (mounted) {
+        setState(() {
+          _isBannerDismissed = box.get('dismissed_battery_warning', defaultValue: false);
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _dismissBatteryWarning() async {
+    try {
+      final box = Hive.isBoxOpen('app_settings') ? Hive.box('app_settings') : await Hive.openBox('app_settings');
+      await box.put('dismissed_battery_warning', true);
+    } catch (_) {}
+    if (mounted) {
+      setState(() {
+        _isBannerDismissed = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkPermissions();
+    }
+  }
+
+  /// Checks SMS, Notification, and Battery Optimization permissions with OEM safe fallbacks and debug logs.
+  Future<void> _checkPermissions() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isCheckingPermissions = true;
+    });
+
+    bool smsGranted = false;
+    bool notificationGranted = false;
+    bool batteryOptDisabled = false;
+
+    try {
+      final sms = await Permission.sms.status;
+      smsGranted = sms.isGranted;
+    } catch (e) {
+      debugPrint('⚠️ Warning: SMS permission check error: $e');
+    }
+
+    try {
+      final notification = await Permission.notification.status;
+      notificationGranted = notification.isGranted;
+    } catch (e) {
+      debugPrint('⚠️ Warning: Notification permission check error: $e');
+    }
+
+    // Safe battery optimization check for custom Android OEMs (Xiaomi, Samsung, Huawei, etc.)
+    try {
+      final battery = await Permission.ignoreBatteryOptimizations.status;
+      batteryOptDisabled = battery.isGranted;
+    } catch (e) {
+      debugPrint('⚠️ Warning: Ignore battery optimizations check error on OEM device: $e');
+      batteryOptDisabled = true; // Fallback so OEM quirk does not hard-block user
+    }
+
+    debugPrint('[PermissionChecker] App resumed / re-checked permission statuses:');
+    debugPrint('  - 📱 SMS Permission Granted: $smsGranted');
+    debugPrint('  - 🔔 Notification Granted: $notificationGranted');
+    debugPrint('  - 🔋 Battery Opt Disabled: $batteryOptDisabled');
+
+    if (mounted) {
+      setState(() {
+        _smsGranted = smsGranted;
+        _notificationGranted = notificationGranted;
+        _batteryOptDisabled = batteryOptDisabled;
+        _isCheckingPermissions = false;
+      });
+    }
   }
 
   void _initServices() {
@@ -627,6 +724,10 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 0. Setup & Permissions Status Checker Banner Card
+            _buildSystemStatusCard(),
+            const SizedBox(height: 12),
+
             // 1. Protection Status Card
             Card(
               elevation: 4,
@@ -894,6 +995,331 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// System Status / Permission Checker Banner Card Widget
+  Widget _buildSystemStatusCard() {
+    if (_isBannerDismissed) return const SizedBox.shrink();
+
+    if (_isCheckingPermissions) {
+      return Card(
+        elevation: 2,
+        color: const Color(0xFF1E293B),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: const Padding(
+          padding: EdgeInsets.all(16),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00E676)),
+              ),
+              SizedBox(width: 12),
+              Text('Checking System Permissions...', style: TextStyle(color: Colors.white70, fontSize: 13)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Treat Battery Optimization check as ADVISORY/OPTIONAL. SMS & Notification are required.
+    final bool requiredPermissionsGranted = _smsGranted && _notificationGranted;
+
+    if (requiredPermissionsGranted) {
+      return Card(
+        elevation: 2,
+        color: const Color(0xFF0F291E),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: const Color(0xFF00E676).withValues(alpha: 0.5), width: 1.5),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: const [
+                  Icon(Icons.check_circle, color: Color(0xFF00E676), size: 28),
+                  SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '🟢 System Guard Active',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Color(0xFF00E676)),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'SMS listening & notification service fully operational.',
+                          style: TextStyle(fontSize: 12, color: Colors.white70),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+
+              // Optional Advisory for Battery Optimization (if not disabled and not dismissed)
+              if (!_batteryOptDisabled && !_isBannerDismissed) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF334155)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: const [
+                          Icon(Icons.battery_saver, color: Colors.orangeAccent, size: 18),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Advisory: Set Battery to "Unrestricted" to prevent background sleep.',
+                              style: TextStyle(fontSize: 12, color: Colors.white70),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: _dismissBatteryWarning,
+                            child: const Text("I've Configured This", style: TextStyle(color: Color(0xFF00E676), fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () async {
+                              await Permission.ignoreBatteryOptimizations.request();
+                              _checkPermissions();
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orangeAccent,
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            child: const Text('Open Settings', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      elevation: 4,
+      color: const Color(0xFF2A1B12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Colors.orangeAccent, width: 1.5),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent, size: 28),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    '⚠️ Setup Incomplete: Action Required',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.orangeAccent),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white70, size: 20),
+                  tooltip: "Dismiss Warning / I've Done This",
+                  onPressed: _dismissBatteryWarning,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Grant required permissions to prevent background service interruption by OS.',
+              style: TextStyle(fontSize: 13, color: Colors.white70),
+            ),
+            const SizedBox(height: 16),
+
+            // DETAILED PERMISSION STATUS BREAKDOWN BOX
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF334155)),
+              ),
+              child: Column(
+                children: [
+                  _buildStatusBreakdownRow(
+                    icon: Icons.sms,
+                    label: '📱 SMS Permission',
+                    isGranted: _smsGranted,
+                    grantedText: 'Granted',
+                    missingText: 'Missing',
+                  ),
+                  const Divider(color: Color(0xFF334155), height: 16),
+                  _buildStatusBreakdownRow(
+                    icon: Icons.notifications,
+                    label: '🔔 Notification Listener',
+                    isGranted: _notificationGranted,
+                    grantedText: 'Granted',
+                    missingText: 'Missing',
+                  ),
+                  const Divider(color: Color(0xFF334155), height: 16),
+                  _buildStatusBreakdownRow(
+                    icon: Icons.battery_saver,
+                    label: '🔋 Battery Optimization',
+                    isGranted: _batteryOptDisabled,
+                    grantedText: 'Ignored (Unrestricted)',
+                    missingText: 'Active (Optimized)',
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            if (!_smsGranted) ...[
+              _buildPermissionActionRow(
+                title: 'SMS Access (Read incoming payment SMS)',
+                buttonText: 'Grant SMS Access',
+                onPressed: () async {
+                  await Permission.sms.request();
+                  _checkPermissions();
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            if (!_notificationGranted) ...[
+              _buildPermissionActionRow(
+                title: 'Notifications (Sound & voice alerts)',
+                buttonText: 'Enable Notifications',
+                onPressed: () async {
+                  await Permission.notification.request();
+                  _checkPermissions();
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            if (!_batteryOptDisabled) ...[
+              _buildPermissionActionRow(
+                title: 'Unrestricted Battery (Prevents background sleep)',
+                buttonText: 'Disable Battery Saver',
+                onPressed: () async {
+                  await Permission.ignoreBatteryOptimizations.request();
+                  _checkPermissions();
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                TextButton.icon(
+                  onPressed: _checkPermissions,
+                  icon: const Icon(Icons.refresh, size: 16, color: Color(0xFF00E676)),
+                  label: const Text('🔄 Re-check Status', style: TextStyle(color: Color(0xFF00E676), fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+                TextButton.icon(
+                  onPressed: () => openAppSettings(),
+                  icon: const Icon(Icons.settings, size: 16, color: Colors.white70),
+                  label: const Text('Open System Settings', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBreakdownRow({
+    required IconData icon,
+    required String label,
+    required bool isGranted,
+    required String grantedText,
+    required String missingText,
+  }) {
+    final Color badgeColor = isGranted ? const Color(0xFF00E676) : Colors.orangeAccent;
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: badgeColor),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white),
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: badgeColor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: badgeColor.withValues(alpha: 0.4)),
+          ),
+          child: Text(
+            isGranted ? grantedText : missingText,
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: badgeColor),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPermissionActionRow({
+    required String title,
+    required String buttonText,
+    required VoidCallback onPressed,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: onPressed,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orangeAccent,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text(buttonText, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
     );
   }
