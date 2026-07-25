@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:image_picker/image_picker.dart';
-import '../models/transaction_model.dart';
 import '../services/voice_alert_service.dart';
 import '../utils/ocr_receipt_parser.dart';
 
@@ -115,7 +114,8 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
     }
   }
 
-  /// Parses recognized raw text, writes to Firestore, triggers Tagalog voice alert, and closes scanner.
+  /// Parses recognized raw text, strictly cross-references Firestore for matching SMS records,
+  /// writes result to Firestore, triggers TTS alert, and closes scanner.
   Future<void> _handleRecognizedText(String rawText) async {
     if (rawText.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -129,20 +129,49 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
 
     final ocrResult = OcrReceiptParser.parse(rawText);
 
-    if (!ocrResult.isValid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(ocrResult.errorMessage ?? 'Failed to parse receipt details.'),
-          backgroundColor: Colors.orange.shade800,
-        ),
-      );
-      return;
-    }
-
     final senderName = ocrResult.sender ?? 'JUAN D.';
     final amount = ocrResult.amount;
-    final referenceNo = ocrResult.referenceNo ?? 'NO_REF';
+    final referenceNo = ocrResult.referenceNo;
     final walletType = ocrResult.walletType;
+
+    bool isMatchedWithSms = false;
+
+    // STRICT CROSS-REFERENCE VERIFICATION QUERY:
+    // Query Firestore transactions collection for matching SMS record
+    if (referenceNo != null && referenceNo.isNotEmpty) {
+      try {
+        final querySnap = await FirebaseFirestore.instance
+            .collection('transactions')
+            .get();
+
+        final matchingDocs = querySnap.docs.where((doc) {
+          final data = doc.data();
+          final String docRef = (data['ref_number'] as String?) ?? (data['reference_no'] as String?) ?? '';
+          final double? docAmount = (data['amount'] as num?)?.toDouble();
+          final bool docIsScam = (data['isScam'] == true) || (data['is_scam'] == true);
+
+          if (docIsScam) return false;
+
+          final bool refMatches = docRef.isNotEmpty && docRef.trim().toUpperCase() == referenceNo.trim().toUpperCase();
+          final bool amountMatches = amount == null || docAmount == null || (amount - docAmount).abs() < 0.01;
+
+          return refMatches && amountMatches;
+        }).toList();
+
+        if (matchingDocs.isNotEmpty) {
+          isMatchedWithSms = true;
+        }
+      } catch (e) {
+        debugPrint('[OcrScannerScreen] Firestore cross-reference verification error: $e');
+      }
+    }
+
+    final String status = isMatchedWithSms
+        ? 'VERIFIED (MATCHED WITH SMS)'
+        : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)';
+
+    final bool isScam = !isMatchedWithSms;
+    final String threatLevel = isMatchedWithSms ? 'LOW' : 'HIGH';
 
     // 1. Sync document to Cloud Firestore `transactions` collection
     try {
@@ -150,28 +179,42 @@ class _OcrScannerScreenState extends State<OcrScannerScreen> {
         'sender': senderName,
         'message': rawText,
         'amount': amount,
-        'reference_no': referenceNo,
-        'ref_number': referenceNo,
+        'reference_no': referenceNo ?? 'NO_REF',
+        'ref_number': referenceNo ?? 'NO_REF',
         'sender_name': senderName,
         'source': walletType,
         'method': 'OCR',
-        'isScam': false,
-        'threatLevel': 'LOW',
-        'status': TransactionStatus.verified.value,
+        'isScam': isScam,
+        'threatLevel': threatLevel,
+        'status': status,
         'timestamp': FieldValue.serverTimestamp(),
       });
-      debugPrint('[OcrScannerScreen] Successfully saved OCR transaction to Firestore.');
+      debugPrint('[OcrScannerScreen] Saved OCR transaction to Firestore (status: $status).');
     } catch (e) {
       debugPrint('[OcrScannerScreen] Firestore write warning: $e');
     }
 
-    // 2. Trigger Tagalog Voice Alert: "Naka-scan ng resibo mula kay [senderName] para sa [amount] piso."
-    await _voiceAlert.speakOcrReceiptAlert(senderName: senderName, amount: amount);
+    // 2. Trigger Tagalog Voice Alert
+    if (isMatchedWithSms) {
+      await _voiceAlert.speakOcrMatchedAlert(senderName: senderName, amount: amount);
+    } else {
+      await _voiceAlert.speakOcrUnverifiedWarning(refNumber: referenceNo);
+    }
 
     if (!mounted) return;
 
+    final updatedOcrResult = OcrParsedResult(
+      amount: amount,
+      referenceNo: referenceNo,
+      sender: senderName,
+      walletType: walletType,
+      rawText: rawText,
+      isValid: isMatchedWithSms,
+      errorMessage: isMatchedWithSms ? null : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)',
+    );
+
     // 3. Return parsed result to previous screen
-    Navigator.pop(context, ocrResult);
+    Navigator.pop(context, updatedOcrResult);
   }
 
   /// Captures current camera frame photo.

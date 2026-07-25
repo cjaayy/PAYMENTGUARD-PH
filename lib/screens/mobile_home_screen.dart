@@ -321,9 +321,13 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
       MaterialPageRoute(builder: (_) => const OcrScannerScreen()),
     );
 
-    if (ocrResult != null && mounted && ocrResult.isValid) {
+    if (ocrResult != null && mounted) {
       final amountDisplay = ocrResult.amount != null ? '₱${ocrResult.amount!.toStringAsFixed(2)}' : 'Payment';
-      
+      final bool isMatched = ocrResult.isValid;
+      final String statusStr = isMatched
+          ? 'VERIFIED (MATCHED WITH SMS)'
+          : 'UNVERIFIED (NO MATCHING SMS / MANUAL CHECK REQUIRED)';
+
       final scannedTx = TransactionModel(
         id: 'ocr_${DateTime.now().millisecondsSinceEpoch}',
         merchantId: 'STORE_COUNTER_01',
@@ -332,24 +336,34 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
         senderName: ocrResult.sender ?? 'JUAN D.',
         source: ocrResult.walletType,
         timestamp: DateTime.now(),
-        status: TransactionStatus.verified.value,
+        status: statusStr,
         sender: ocrResult.walletType,
         message: ocrResult.rawText,
-        isScam: false,
-        threatLevel: 'LOW',
+        isScam: !isMatched,
+        threatLevel: isMatched ? 'LOW' : 'HIGH',
       );
 
       setState(() {
         _transactionsList.insert(0, scannedTx);
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('📸 OCR VERIFIED: $amountDisplay from ${ocrResult.sender} (Ref #${ocrResult.referenceNo})'),
-          backgroundColor: Colors.green.shade800,
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      if (isMatched) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📸 OCR VERIFIED (MATCHED SMS): $amountDisplay from ${ocrResult.sender}'),
+            backgroundColor: Colors.green.shade800,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('⚠️ OCR UNVERIFIED: No matching SMS found for Ref #${ocrResult.referenceNo ?? "N/A"}'),
+            backgroundColor: Colors.red.shade900,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 

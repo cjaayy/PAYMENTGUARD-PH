@@ -83,6 +83,40 @@ class VoiceAlertService {
     await _flutterTts.speak(text);
   }
 
+  /// Triggers a Tagalog voice announcement when an OCR scanned receipt matches an incoming SMS record in Firestore.
+  /// Example audio: "Naka-scan ng resibo. Verified payment mula kay Juan D.!"
+  Future<void> speakOcrMatchedAlert({
+    required String senderName,
+    required double? amount,
+  }) async {
+    await init();
+
+    final amountText = _formatAmountInTagalog(amount);
+    final text = _activeLanguage.startsWith('tl')
+        ? 'Naka-scan ng resibo. Verified payment mula kay $senderName para sa $amountText!'
+        : 'Scanned receipt verified. Payment of $amountText from $senderName confirmed!';
+
+    debugPrint('[VoiceAlertService] Speaking OCR matched alert: "$text"');
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
+  }
+
+  /// Triggers a Tagalog voice warning when an OCR scanned receipt has NO matching incoming SMS record in Firestore.
+  /// Example audio: "Babala! Walang nahanap na katumbas na SMS para sa reference number na ito. Mangyaring suriin."
+  Future<void> speakOcrUnverifiedWarning({
+    required String? refNumber,
+  }) async {
+    await init();
+
+    final text = _activeLanguage.startsWith('tl')
+        ? 'Babala! Walang nahanap na katumbas na SMS para sa reference number na ito. Mangyaring suriin nang manu-mano.'
+        : 'Warning! No matching SMS record found for this reference number. Manual verification required.';
+
+    debugPrint('[VoiceAlertService] Speaking OCR unverified warning: "$text"');
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
+  }
+
   /// Triggers an urgent Tagalog voice warning when a phishing / scam SMS is detected.
   /// Spoken text: "Babala! Ang natanggap mong mensahe ay naglalaman ng kahina-hinalang link. Huwag mag-click."
   Future<void> speakScamWarningAlert() async {

@@ -27,28 +27,28 @@ class OcrParsedResult {
 /// Robust RegEx Parser Utility to extract receipt fields from recognized OCR text strings
 /// across GCash, Maya, and generic e-wallet receipt screenshot formats.
 class OcrReceiptParser {
-  /// RegEx rules for extracting Amount in PHP / Php / P / ₱ currency formats.
+  /// RegEx rules for extracting Amount in PHP / Php / P / ₱ currency formats, supporting multi-line labels.
   static final List<RegExp> _amountRegexes = [
-    // Matches "Amount: PHP 1,500.00" or "Total Amount ₱ 1,500.00"
-    RegExp(r'(?:amount|total|paid|sent)\s*[:\-\s]*\s*(?:PHP|Php|php|P|₱)?\s*([\d,]+\.\d{2}|[\d,]+)', caseSensitive: false),
-    // Matches "PHP 1,500.00", "Php 1500.00", "P500.00", "₱1,250.00"
-    RegExp(r'(?:PHP|Php|php|P|₱)\s*([\d,]+\.\d{2}|[\d,]+)', caseSensitive: false),
+    // Matches "Amount:\nPHP 1,500.00", "Total Amount\n₱ 1,500.00", "Amount 500.00"
+    RegExp(r'(?:amount|total|paid|sent)[\s\n\r.:#-]*\s*(?:PHP|Php|php|P|₱)?[\s\n\r]*([\d,]+\.\d{2}|[\d,]+)', caseSensitive: false),
+    // Matches "PHP\n1,500.00", "Php 1500.00", "P500.00", "₱1,250.00"
+    RegExp(r'(?:PHP|Php|php|P|₱)[\s\n\r]*([\d,]+\.\d{2}|[\d,]+)', caseSensitive: false),
     // Fallback standalone decimal currency amount
     RegExp(r'\b([\d]{1,3}(?:,[\d]{3})+\.\d{2})\b'),
   ];
 
-  /// RegEx rules for extracting Reference / Transaction Number.
+  /// RegEx rules for extracting Reference / Transaction Number across newlines or spaces.
   static final List<RegExp> _refNumberRegexes = [
-    // Matches "Ref No. 1002938475", "Ref. No: 987654321012", "Reference No. 123456789012"
-    RegExp(r'(?:Ref(?:erence)?|Trans(?:action)?|Seq|Trace|ID|No|#)[\s.:#]*(?:No|Num|Number|#)?[\s.:#]*([A-Za-z0-9]{6,20})', caseSensitive: false),
-    // Standalone 10-13 digit number common in GCash/Maya receipts
+    // Matches "Ref No.\n1002 9384 75", "Ref. No:\n987654321012", "Reference No.\n123456789012"
+    RegExp(r'(?:Ref(?:erence)?|Trans(?:action)?|Seq|Trace|ID|No|#)[\s\n\r.:#]*(?:No|Num|Number|#)?[\s\n\r.:#]*([A-Za-z0-9\s]{6,25})', caseSensitive: false),
+    // Standalone 10-13 digit number common in GCash/Maya receipts (e.g., 1002938475 or 987654321012)
     RegExp(r'\b(1\d{9,12}|9\d{9,12})\b'),
   ];
 
-  /// RegEx rules for extracting Sender Name.
+  /// RegEx rules for extracting Sender Name across newlines.
   static final List<RegExp> _senderRegexes = [
-    // Matches "Sent by JUAN D.", "From JUAN DELA CRUZ", "Sender: MARIA C."
-    RegExp(r'(?:sent\s+by|from|sender|payer|received\s+from|by)\s*[:\-\s]*([A-Z0-9\s\.\-\/]+?)(?=\s+(?:to|via|with|ref|amount|date|09\d{9})|$|\n)', caseSensitive: false),
+    // Matches "Sent by\nJUAN D.", "From JUAN DELA CRUZ", "Sender:\nMARIA C."
+    RegExp(r'(?:sent\s+by|from|sender|payer|received\s+from|by)[\s\n\r.:-]*([A-Z0-9\s\.\-\/]+?)(?=\s+(?:to|via|with|ref|amount|date|09\d{9})|$|\n|\r)', caseSensitive: false),
     // Matches name before phone number or account details
     RegExp(r'([A-Z\s]{3,25})\s+(?:09\d{9}|\*\*\*\*\d{4})'),
   ];
@@ -112,7 +112,7 @@ class OcrReceiptParser {
     for (final regex in _amountRegexes) {
       final match = regex.firstMatch(rawText);
       if (match != null && match.groupCount >= 1) {
-        final rawStr = match.group(1)?.replaceAll(',', '').trim();
+        final rawStr = match.group(1)?.replaceAll(',', '').replaceAll('\n', '').replaceAll('\r', '').trim();
         if (rawStr != null) {
           final val = double.tryParse(rawStr);
           if (val != null && val > 0) return val;
@@ -122,14 +122,21 @@ class OcrReceiptParser {
     return null;
   }
 
-  /// Extracts reference number from OCR text.
+  /// Extracts reference number from OCR text and strips whitespace/newlines.
   static String? _extractRefNumber(String rawText) {
     for (final regex in _refNumberRegexes) {
       final match = regex.firstMatch(rawText);
       if (match != null && match.groupCount >= 1) {
-        final ref = match.group(1)?.trim();
-        if (ref != null && ref.length >= 6) {
-          return ref;
+        var ref = match.group(1)?.replaceAll(RegExp(r'[\s\n\r]'), '').trim();
+        if (ref != null) {
+          // Take first 10-13 digit sequence if preceded by text label
+          final digitMatch = RegExp(r'\d{6,13}').firstMatch(ref);
+          if (digitMatch != null) {
+            ref = digitMatch.group(0);
+          }
+          if (ref != null && ref.length >= 6) {
+            return ref;
+          }
         }
       }
     }
@@ -144,7 +151,7 @@ class OcrReceiptParser {
         var name = match.group(1)?.trim();
         if (name != null && name.length >= 2) {
           // Clean up newlines or extra text
-          name = name.split('\n').first.trim();
+          name = name.split('\n').first.split('\r').first.trim();
           name = name.replaceAll(RegExp(r'\s+09\d{9}$'), '').trim();
           if (name.isNotEmpty) return name;
         }
