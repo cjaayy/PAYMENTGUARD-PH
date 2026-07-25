@@ -542,9 +542,42 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
               child: const Icon(Icons.shield, color: Color(0xFF00E676), size: 20),
             ),
             const SizedBox(width: 10),
-            const Text(
-              'PaymentGuard Cashier',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+            Expanded(
+              child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: FirebaseAuth.instance.currentUser != null
+                    ? FirebaseFirestore.instance.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).snapshots()
+                    : const Stream.empty(),
+                builder: (context, snapshot) {
+                  final user = FirebaseAuth.instance.currentUser;
+                  String storeName = 'PaymentGuard Store';
+                  String ownerName = user?.displayName ?? 'Store Owner';
+
+                  if (snapshot.hasData && snapshot.data != null && snapshot.data!.exists) {
+                    final data = snapshot.data!.data();
+                    if (data != null) {
+                      storeName = data['store_name']?.toString() ?? storeName;
+                      ownerName = data['owner_name']?.toString() ?? data['full_name']?.toString() ?? ownerName;
+                    }
+                  }
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        storeName,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        'Owner: $ownerName',
+                        style: const TextStyle(fontSize: 11, color: Color(0xFF00E676), fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
           ],
         ),

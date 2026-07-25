@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -11,6 +12,8 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+  final TextEditingController _storeNameController = TextEditingController();
+  final TextEditingController _ownerNameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
@@ -21,6 +24,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _storeNameController.dispose();
+    _ownerNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -34,15 +39,34 @@ class _LoginScreenState extends State<LoginScreen> {
       _errorMessage = null;
     });
 
+    final storeName = _storeNameController.text.trim();
+    final ownerName = _ownerNameController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
     try {
       if (_isSignUp) {
-        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        // 1. Create Firebase Auth Account
+        final userCredential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
           email: email,
           password: password,
         );
+
+        final user = userCredential.user;
+        if (user != null) {
+          // 2. Update Firebase Auth Display Name with Owner Name
+          await user.updateDisplayName(ownerName);
+
+          // 3. Save Store Owner Profile Document in Firestore `users/{user.uid}`
+          await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'uid': user.uid,
+            'owner_name': ownerName,
+            'store_name': storeName,
+            'email': email,
+            'created_at': FieldValue.serverTimestamp(),
+          });
+          debugPrint('✅ SUCCESS: Created store owner profile for $ownerName ($storeName)');
+        }
       } else {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
           email: email,
@@ -193,6 +217,67 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 20),
+                    ],
+
+                    // Store Name & Owner Name Fields (Registration Mode Only)
+                    if (_isSignUp) ...[
+                      // 1. Store Name Field
+                      TextFormField(
+                        controller: _storeNameController,
+                        keyboardType: TextInputType.text,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: 'Store Name',
+                          hintText: "e.g. Aling Nena's Store",
+                          prefixIcon: const Icon(Icons.storefront_outlined, color: Colors.grey),
+                          filled: true,
+                          fillColor: const Color(0xFF0F172A),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: Color(0xFF00E676), width: 1.5),
+                          ),
+                        ),
+                        validator: (value) {
+                          if (_isSignUp && (value == null || value.trim().isEmpty)) {
+                            return 'Please enter store name';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+
+                      // 2. Owner Name Field
+                      TextFormField(
+                        controller: _ownerNameController,
+                        keyboardType: TextInputType.name,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: 'Owner Name',
+                          hintText: 'e.g. Nena Dela Cruz',
+                          prefixIcon: const Icon(Icons.person_outline, color: Colors.grey),
+                          filled: true,
+                          fillColor: const Color(0xFF0F172A),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide.none,
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: const BorderSide(color: Color(0xFF00E676), width: 1.5),
+                          ),
+                        ),
+                        validator: (value) {
+                          if (_isSignUp && (value == null || value.trim().isEmpty)) {
+                            return 'Please enter owner name';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
                     ],
 
                     // Email Address Field

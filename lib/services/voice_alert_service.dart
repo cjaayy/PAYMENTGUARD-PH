@@ -113,9 +113,12 @@ class VoiceAlertService {
     await _flutterTts.speak(text);
   }
 
-  /// Speaks payment received alert announcing amount AND sender name dynamically.
-  /// If senderName is available: "Payment received: [Amount] pesos from [SenderName]."
-  /// If senderName is missing/empty/Unknown: "Payment received: [Amount] pesos."
+  /// Speaks payment received alert announcing amount, sender name, AND reference number (digit-by-digit).
+  /// Examples:
+  /// - Sender & Ref: "Payment received: [Amount] pesos from [SenderName]. Reference number [1 0 0 2 9]."
+  /// - Sender only: "Payment received: [Amount] pesos from [SenderName]."
+  /// - Ref only: "Payment received: [Amount] pesos. Reference number [1 0 0 2 9]."
+  /// - Amount only: "Payment received: [Amount] pesos."
   Future<void> speakPaymentReceived({
     required double? amount,
     String? senderName,
@@ -125,6 +128,7 @@ class VoiceAlertService {
 
     final double amt = amount ?? 0.0;
     final String amountText = _formatAmount(amt);
+
     final String sender = (senderName != null &&
             senderName.trim().isNotEmpty &&
             senderName.trim().toLowerCase() != 'unknown' &&
@@ -133,9 +137,25 @@ class VoiceAlertService {
         ? senderName.trim()
         : '';
 
-    final String text = sender.isNotEmpty
-        ? 'Payment received: $amountText pesos from $sender.'
-        : 'Payment received: $amountText pesos.';
+    String formattedRef = '';
+    if (refNumber != null &&
+        refNumber.trim().isNotEmpty &&
+        refNumber.trim().toUpperCase() != 'NO_REF' &&
+        refNumber.trim().toUpperCase() != 'N/A' &&
+        refNumber.trim().toUpperCase() != 'NULL') {
+      formattedRef = formatRefForSpeech(refNumber);
+    }
+
+    String text;
+    if (sender.isNotEmpty && formattedRef.isNotEmpty) {
+      text = 'Payment received: $amountText pesos from $sender. Reference number $formattedRef.';
+    } else if (sender.isNotEmpty) {
+      text = 'Payment received: $amountText pesos from $sender.';
+    } else if (formattedRef.isNotEmpty) {
+      text = 'Payment received: $amountText pesos. Reference number $formattedRef.';
+    } else {
+      text = 'Payment received: $amountText pesos.';
+    }
 
     debugPrint('[VoiceAlertService] Speaking payment received: "$text"');
     await _flutterTts.stop();
