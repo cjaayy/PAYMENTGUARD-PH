@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isTxOwner(data) {
+      return isAuthenticated() && (
+        (('userId' in data) && data.userId == request.auth.uid) ||
+        (('store_id' in data) && data.store_id == request.auth.uid) ||
+        (('merchant_id' in data) && data.merchant_id == request.auth.uid)
+      );
+    }
+
+    // 1. Store Owners / Users Profile Collection
+    match /users/{userId} {
+      // Store owners can only read and write their own profile data
+      allow read, write: if isOwner(userId);
+    }
+
+    // 2. Transactions Collection (GCash, Maya, MariBank Logs)
+    match /transactions/{docId} {
+      // Allow reading existing transactions ONLY IF they belong to the logged-in owner
+      allow read: if isTxOwner(resource.data);
+      
+      // Allow creating new transaction records ONLY IF tagged with the logged-in owner's UID
+      allow create: if isTxOwner(request.resource.data) 
+                    && request.resource.data.amount is number
+                    && (
+                      (('reference_no' in request.resource.data) && request.resource.data.reference_no is string) ||
+                      (('ref_number' in request.resource.data) && request.resource.data.ref_number is string)
+                    );
+
+      // Allow updating/deleting ONLY IF the transaction belongs to the logged-in owner
+      allow update, delete: if isTxOwner(resource.data);
+    }
+  }
+}
