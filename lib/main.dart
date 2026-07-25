@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'firebase_options.dart';
 import 'screens/platform_router.dart';
 import 'services/duplicate_checker_service.dart';
-import 'package:another_telephony/telephony.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -13,11 +13,13 @@ void main() async {
   await Hive.initFlutter();
   await Hive.openBox<String>(kVerifiedRefNumbersBox);
 
-  // 2. Initialize Firebase with defensive fallback
+  // 2. Initialize Firebase with current platform options
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
   } catch (e) {
-    debugPrint('Firebase initialization warning (options pending): $e');
+    debugPrint('Firebase initialization warning: $e');
   }
 
   runApp(

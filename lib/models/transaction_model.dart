@@ -38,22 +38,30 @@ enum PaymentSource {
 class TransactionModel {
   final String id;
   final String merchantId;
-  final double amount;
+  final double? amount;
   final String refNumber;
   final String senderName;
   final String source; // e.g., 'GCash', 'Maya'
   final DateTime timestamp;
-  final String status; // 'VERIFIED', 'DUPLICATE_REJECTED'
+  final String status; // 'VERIFIED', 'DUPLICATE_REJECTED', 'SCAM_FLAGGED'
+  final String sender; // e.g., 'GCash'
+  final String message; // Full SMS body text
+  final bool isScam; // True for phishing/scam attempts
+  final String threatLevel; // 'LOW' or 'HIGH'
 
   const TransactionModel({
     required this.id,
     required this.merchantId,
-    required this.amount,
+    this.amount,
     required this.refNumber,
     required this.senderName,
     required this.source,
     required this.timestamp,
     required this.status,
+    required this.sender,
+    required this.message,
+    required this.isScam,
+    required this.threatLevel,
   });
 
   /// Factory constructor to create a [TransactionModel] from a Map (Firestore data).
@@ -71,15 +79,26 @@ class TransactionModel {
       parsedTimestamp = DateTime.now();
     }
 
+    final bool isScamVal = (map['isScam'] == true) || (map['is_scam'] == true);
+    final String threatLevelVal = (map['threatLevel'] as String?) ??
+        (map['threat_level'] as String?) ??
+        (isScamVal ? 'HIGH' : 'LOW');
+    final String senderVal = (map['sender'] as String?) ?? (map['source'] as String?) ?? 'GCash';
+    final String messageVal = (map['message'] as String?) ?? '';
+
     return TransactionModel(
-      id: id ?? map['id'] ?? '',
-      merchantId: map['merchant_id'] as String? ?? '',
-      amount: (map['amount'] as num?)?.toDouble() ?? 0.0,
-      refNumber: map['ref_number'] as String? ?? '',
-      senderName: map['sender_name'] as String? ?? 'UNKNOWN SENDER',
-      source: map['source'] as String? ?? 'GCash',
+      id: id ?? (map['id'] as String?) ?? '',
+      merchantId: (map['merchant_id'] as String?) ?? '',
+      amount: (map['amount'] as num?)?.toDouble(),
+      refNumber: (map['ref_number'] as String?) ?? '',
+      senderName: (map['sender_name'] as String?) ?? (isScamVal ? 'SUSPICIOUS SENDER' : 'UNKNOWN SENDER'),
+      source: (map['source'] as String?) ?? senderVal,
       timestamp: parsedTimestamp,
-      status: map['status'] as String? ?? TransactionStatus.verified.value,
+      status: (map['status'] as String?) ?? (isScamVal ? 'SCAM_FLAGGED' : TransactionStatus.verified.value),
+      sender: senderVal,
+      message: messageVal,
+      isScam: isScamVal,
+      threatLevel: threatLevelVal,
     );
   }
 
@@ -93,7 +112,8 @@ class TransactionModel {
   }
 
   /// Converts the [TransactionModel] instance to a Map suitable for Cloud Firestore writes.
-  Map<String, dynamic> toMap() {
+  /// Uses FieldValue.serverTimestamp() when [useServerTimestamp] is true.
+  Map<String, dynamic> toMap({bool useServerTimestamp = false}) {
     return {
       'id': id,
       'merchant_id': merchantId,
@@ -101,7 +121,11 @@ class TransactionModel {
       'ref_number': refNumber,
       'sender_name': senderName,
       'source': source,
-      'timestamp': Timestamp.fromDate(timestamp),
+      'sender': sender,
+      'message': message,
+      'isScam': isScam,
+      'threatLevel': threatLevel,
+      'timestamp': useServerTimestamp ? FieldValue.serverTimestamp() : Timestamp.fromDate(timestamp),
       'status': status,
     };
   }
@@ -116,6 +140,10 @@ class TransactionModel {
     String? source,
     DateTime? timestamp,
     String? status,
+    String? sender,
+    String? message,
+    bool? isScam,
+    String? threatLevel,
   }) {
     return TransactionModel(
       id: id ?? this.id,
@@ -126,18 +154,22 @@ class TransactionModel {
       source: source ?? this.source,
       timestamp: timestamp ?? this.timestamp,
       status: status ?? this.status,
+      sender: sender ?? this.sender,
+      message: message ?? this.message,
+      isScam: isScam ?? this.isScam,
+      threatLevel: threatLevel ?? this.threatLevel,
     );
   }
 
   /// Helper boolean to quickly verify if the transaction status is verified.
-  bool get isVerified => status.toUpperCase() == TransactionStatus.verified.value;
+  bool get isVerified => !isScam && status.toUpperCase() == TransactionStatus.verified.value;
 
   /// Helper boolean to check if transaction was flagged as duplicate.
   bool get isDuplicate => status.toUpperCase() == TransactionStatus.duplicateRejected.value;
 
   @override
   String toString() {
-    return 'TransactionModel(id: $id, merchantId: $merchantId, amount: $amount, refNumber: $refNumber, senderName: $senderName, source: $source, timestamp: $timestamp, status: $status)';
+    return 'TransactionModel(id: $id, merchantId: $merchantId, amount: $amount, refNumber: $refNumber, senderName: $senderName, source: $source, sender: $sender, isScam: $isScam, threatLevel: $threatLevel, timestamp: $timestamp, status: $status)';
   }
 
   @override
@@ -150,6 +182,10 @@ class TransactionModel {
         other.refNumber == refNumber &&
         other.senderName == senderName &&
         other.source == source &&
+        other.sender == sender &&
+        other.message == message &&
+        other.isScam == isScam &&
+        other.threatLevel == threatLevel &&
         other.timestamp == timestamp &&
         other.status == status;
   }
@@ -163,6 +199,10 @@ class TransactionModel {
       refNumber,
       senderName,
       source,
+      sender,
+      message,
+      isScam,
+      threatLevel,
       timestamp,
       status,
     );

@@ -27,6 +27,10 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       refNumber: '102938475610',
       senderName: 'JUAN DELA CRUZ',
       source: 'GCash',
+      sender: 'GCash',
+      message: 'You have received PHP 150.00 of GCash from JUAN DELA CRUZ.',
+      isScam: false,
+      threatLevel: 'LOW',
       timestamp: DateTime.now().subtract(const Duration(minutes: 3)),
       status: TransactionStatus.verified.value,
     ),
@@ -37,18 +41,26 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
       refNumber: '987654321012',
       senderName: 'MARIA CLARA',
       source: 'Maya',
+      sender: 'Maya',
+      message: 'You received P500.00 from MARIA CLARA via Maya.',
+      isScam: false,
+      threatLevel: 'LOW',
       timestamp: DateTime.now().subtract(const Duration(minutes: 18)),
       status: TransactionStatus.verified.value,
     ),
     TransactionModel(
       id: 'tx_web_03',
       merchantId: 'STORE_COUNTER_01',
-      amount: 250.00,
-      refNumber: '112233445566',
-      senderName: 'PEDRO PENDUKO',
+      amount: null,
+      refNumber: 'NO_REF',
+      senderName: 'PHISHING SENDER',
       source: 'GCash',
+      sender: 'GCash',
+      message: 'GCash: Your account is LOCKED due to suspicious activity. Verify immediately at http://gcash-security-update.ph',
+      isScam: true,
+      threatLevel: 'HIGH',
       timestamp: DateTime.now().subtract(const Duration(hours: 1)),
-      status: TransactionStatus.duplicateRejected.value,
+      status: 'SCAM_FLAGGED',
     ),
   ];
 
@@ -126,12 +138,12 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               borderRadius: BorderRadius.circular(32),
               boxShadow: [
                 BoxShadow(
-                  color: const Color(0xFF00E676).withOpacity(0.12),
+                  color: const Color(0xFF00E676).withValues(alpha: 0.12),
                   blurRadius: 40,
                   spreadRadius: 8,
                 ),
               ],
-              border: Border.all(color: const Color(0xFF00E676).withOpacity(0.4), width: 2),
+              border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.4), width: 2),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -139,7 +151,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF00E676).withOpacity(0.15),
+                    color: const Color(0xFF00E676).withValues(alpha: 0.15),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(Icons.verified, size: 88, color: Color(0xFF00E676)),
@@ -210,7 +222,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     List<TransactionModel> filteredTransactions,
   ) {
     final verifiedTxList = allTransactions.where((t) => t.isVerified);
-    final totalDailyVolume = verifiedTxList.fold(0.0, (sum, t) => sum + t.amount);
+    final totalDailyVolume = verifiedTxList.fold(0.0, (previousValue, element) => previousValue + (element.amount ?? 0.0));
     final totalVerifiedCount = verifiedTxList.length;
     final totalBlockedDuplicates = allTransactions.where((t) => t.isDuplicate).length;
 
@@ -231,7 +243,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.2),
+                  color: Colors.green.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(color: Colors.green),
                 ),
@@ -404,23 +416,33 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                         itemBuilder: (context, index) {
                           final tx = filteredTransactions[index];
                           final isVerified = tx.isVerified;
+                          final isScam = tx.isScam;
+                          final threatLevel = tx.threatLevel.toUpperCase();
+
+                          final iconColor = isScam
+                              ? Colors.red
+                              : (isVerified ? Colors.green : Colors.orange);
+                          final iconData = isScam
+                              ? Icons.gpp_bad
+                              : (isVerified ? Icons.check_circle_outline : Icons.warning_amber);
+
+                          final amountDisplay = tx.amount != null ? currencyFormatter.format(tx.amount) : 'N/A';
 
                           return ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                             leading: CircleAvatar(
-                              backgroundColor: isVerified
-                                  ? Colors.green.withOpacity(0.15)
-                                  : Colors.red.withOpacity(0.15),
-                              child: Icon(
-                                isVerified ? Icons.check_circle_outline : Icons.gpp_bad_outlined,
-                                color: isVerified ? Colors.green : Colors.red,
-                              ),
+                              backgroundColor: iconColor.withValues(alpha: 0.15),
+                              child: Icon(iconData, color: iconColor),
                             ),
                             title: Row(
                               children: [
                                 Text(
                                   tx.senderName,
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: isScam ? Colors.redAccent : Colors.white,
+                                  ),
                                 ),
                                 const SizedBox(width: 8),
                                 Container(
@@ -430,19 +452,62 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                     borderRadius: BorderRadius.circular(6),
                                   ),
                                   child: Text(
-                                    tx.source,
+                                    tx.sender.isNotEmpty ? tx.sender : tx.source,
                                     style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: isScam ? Colors.red.withValues(alpha: 0.2) : Colors.green.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: isScam ? Colors.red : Colors.green,
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    'THREAT: $threatLevel',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: isScam ? Colors.redAccent : Colors.greenAccent,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                            subtitle: Text('Ref No: ${tx.refNumber} • ${DateFormat('MMM dd, yyyy - hh:mm a').format(tx.timestamp)}'),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 2),
+                                Text(
+                                  isScam
+                                      ? '⚠️ Phishing Link Alert • ${DateFormat('MMM dd, yyyy - hh:mm a').format(tx.timestamp)}'
+                                      : 'Ref No: ${tx.refNumber} • ${DateFormat('MMM dd, yyyy - hh:mm a').format(tx.timestamp)}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: isScam ? Colors.red.shade200 : Colors.grey.shade400,
+                                  ),
+                                ),
+                                if (tx.message.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'SMS: "${tx.message}"',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.grey.shade500),
+                                  ),
+                                ],
+                              ],
+                            ),
                             trailing: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Text(
-                                  currencyFormatter.format(tx.amount),
+                                  amountDisplay,
                                   style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
@@ -450,11 +515,11 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                                   ),
                                 ),
                                 Text(
-                                  tx.status,
+                                  isScam ? 'SCAM_FLAGGED' : tx.status,
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
-                                    color: isVerified ? Colors.green : Colors.red,
+                                    color: iconColor,
                                   ),
                                 ),
                               ],
@@ -487,7 +552,7 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
+                color: color.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(icon, color: color, size: 28),

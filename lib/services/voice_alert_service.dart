@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:intl/intl.dart';
 
 /// Voice Alert Service utilizing Text-to-Speech (TTS) for Tagalog & English payment notifications.
 class VoiceAlertService {
@@ -37,22 +36,53 @@ class VoiceAlertService {
     }
   }
 
+  /// Helper converter for amounts like 500 -> "limandaang piso" or "500 pesos"
+  String _formatAmountInTagalog(double? amount) {
+    if (amount == null || amount <= 0) return 'piso';
+    if (amount == 500) return 'limandaang piso';
+    if (amount == 100) return 'sandaang piso';
+    if (amount == 1000) return 'isang libong piso';
+
+    final formattedStr = amount % 1 == 0 ? amount.toInt().toString() : amount.toStringAsFixed(2);
+    return '$formattedStr pesos';
+  }
+
   /// Triggers a Tagalog voice announcement for a newly verified payment received.
-  /// Example audio: "Pumasok na ang 150 pesos mula kay JUAN DELA CRUZ. Verified."
-  Future<void> speakPaymentReceived({
-    required double amount,
+  /// Example audio: "Nakatanggap ka ng limandaang piso mula kay JUAN D."
+  Future<void> speakLegitPaymentAlert({
+    required double? amount,
     required String senderName,
   }) async {
     await init();
 
-    final formattedAmountStr = amount % 1 == 0 ? amount.toInt().toString() : amount.toStringAsFixed(2);
+    final amountText = _formatAmountInTagalog(amount);
     final text = _activeLanguage.startsWith('tl')
-        ? 'Pumasok na ang $formattedAmountStr pesos mula kay $senderName. Verified.'
-        : 'Payment of $formattedAmountStr pesos received from $senderName. Verified.';
+        ? 'Nakatanggap ka ng $amountText mula kay $senderName.'
+        : 'Payment of $amountText received from $senderName.';
 
-    debugPrint('[VoiceAlertService] Speaking payment alert: "$text"');
+    debugPrint('[VoiceAlertService] Speaking legit payment alert: "$text"');
     await _flutterTts.stop();
     await _flutterTts.speak(text);
+  }
+
+  /// Triggers an urgent Tagalog voice warning when a phishing / scam SMS is detected.
+  /// Spoken text: "Babala! Ang natanggap mong mensahe ay naglalaman ng kahina-hinalang link. Huwag mag-click."
+  Future<void> speakScamWarningAlert() async {
+    await init();
+
+    const text = 'Babala! Ang natanggap mong mensahe ay naglalaman ng kahina-hinalang link. Huwag mag-click.';
+
+    debugPrint('[VoiceAlertService] Speaking scam warning alert: "$text"');
+    await _flutterTts.stop();
+    await _flutterTts.speak(text);
+  }
+
+  /// Triggers a Tagalog voice announcement for a newly verified payment received (legacy signature).
+  Future<void> speakPaymentReceived({
+    required double amount,
+    required String senderName,
+  }) async {
+    await speakLegitPaymentAlert(amount: amount, senderName: senderName);
   }
 
   /// Triggers a high-priority Tagalog voice warning when a duplicate reference number / fake screenshot attempt occurs.

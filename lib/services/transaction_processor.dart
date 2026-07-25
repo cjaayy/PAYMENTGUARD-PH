@@ -32,10 +32,11 @@ class TransactionProcessor {
 
   /// Processes an incoming raw e-wallet SMS text alert.
   /// 
-  /// 1. Parses SMS using [SmsParser].
-  /// 2. Checks local Hive cache via [DuplicateCheckerService].
-  /// 3. Triggers voice alert via [VoiceAlertService].
-  /// 4. Pushes verified or duplicate rejected record to Firestore `transactions` collection.
+  /// 1. Parses SMS using [SmsParser] (detects amount, ref, sender, e-wallet, and phishing links/keywords).
+  /// 2. Handles Scam/Phishing SMS (triggers Tagalog scam voice alert & pushes HIGH threat record to Firestore).
+  /// 3. Checks local Hive cache for duplicate reference numbers.
+  /// 4. Triggers Tagalog voice alert via [VoiceAlertService].
+  /// 5. Pushes record to Cloud Firestore `transactions` collection.
   Future<TransactionModel?> processIncomingSms(
     String smsBody, {
     String? senderHeader,
@@ -44,24 +45,54 @@ class TransactionProcessor {
     // 1. Parse SMS
     final parsedResult = SmsParser.parse(smsBody, senderHeader: senderHeader);
 
-    if (!parsedResult.isValid) {
+    if (!parsedResult.isValid && !parsedResult.isScam) {
       debugPrint('[TransactionProcessor] Ignored SMS: ${parsedResult.errorMessage}');
       return null;
     }
 
-    final refNumber = parsedResult.refNumber!;
-    final amount = parsedResult.amount!;
-    final senderName = parsedResult.senderName!;
-    final source = parsedResult.source;
     final timestamp = DateTime.now();
+    final source = parsedResult.source;
 
-    // 2. Offline Duplicate Check using Hive
+    // 2. PHISHING / SCAM SMS HANDLING
+    if (parsedResult.isScam) {
+      debugPrint('[TransactionProcessor] SCAM DETECTED: ${parsedResult.rawBody}');
+
+      // a. Urgent Tagalog Voice Scam Alert
+      await _voiceAlert.speakScamWarningAlert();
+
+      // b. Build Scam Transaction Object
+      final scamTx = TransactionModel(
+        id: 'tx_scam_${timestamp.millisecondsSinceEpoch}',
+        merchantId: merchantId,
+        amount: parsedResult.amount,
+        refNumber: parsedResult.refNumber ?? 'NO_REF',
+        senderName: parsedResult.senderName ?? 'PHISHING SENDER',
+        source: source,
+        timestamp: timestamp,
+        status: 'SCAM_FLAGGED',
+        sender: source,
+        message: smsBody,
+        isScam: true,
+        threatLevel: 'HIGH',
+      );
+
+      // c. Push to Cloud Firestore `transactions` collection
+      await _pushToFirestore(scamTx);
+
+      return scamTx;
+    }
+
+    final refNumber = parsedResult.refNumber!;
+    final amount = parsedResult.amount;
+    final senderName = parsedResult.senderName!;
+
+    // 3. OFFLINE DUPLICATE CHECK USING HIVE
     final isDuplicate = _duplicateChecker.isReferenceDuplicate(refNumber);
 
     if (isDuplicate) {
       debugPrint('[TransactionProcessor] DUPLICATE DETECTED for ref: $refNumber');
 
-      // a. Voice Warning Alert
+      // a. Tagalog Voice Duplicate Warning
       await _voiceAlert.speakDuplicateWarning(refNumber: refNumber);
 
       // b. Build Duplicate Rejected Transaction Object
@@ -74,6 +105,10 @@ class TransactionProcessor {
         source: source,
         timestamp: timestamp,
         status: TransactionStatus.duplicateRejected.value,
+        sender: source,
+        message: smsBody,
+        isScam: false,
+        threatLevel: 'LOW',
       );
 
       // c. Push to Cloud Firestore
@@ -82,12 +117,12 @@ class TransactionProcessor {
       return duplicateTx;
     }
 
-    // 3. VERIFIED NEW TRANSACTION
+    // 4. VERIFIED NEW LEGIT TRANSACTION
     // a. Save reference number locally in Hive
     await _duplicateChecker.saveReferenceLocally(refNumber);
 
-    // b. Trigger Voice Alert ("Pumasok na ang [amount] pesos mula kay [senderName]")
-    await _voiceAlert.speakPaymentReceived(amount: amount, senderName: senderName);
+    // b. Trigger Tagalog Voice Alert ("Nakatanggap ka ng [amount] piso mula kay [senderName]")
+    await _voiceAlert.speakLegitPaymentAlert(amount: amount, senderName: senderName);
 
     // c. Build Verified Transaction Object
     final verifiedTx = TransactionModel(
@@ -99,6 +134,10 @@ class TransactionProcessor {
       source: source,
       timestamp: timestamp,
       status: TransactionStatus.verified.value,
+      sender: source,
+      message: smsBody,
+      isScam: false,
+      threatLevel: 'LOW',
     );
 
     // d. Push to Cloud Firestore (`transactions` collection)
@@ -115,12 +154,14 @@ class TransactionProcessor {
     }
 
     try {
+      final dataMap = tx.toMap(useServerTimestamp: true);
+
       await _firestore!
           .collection('transactions')
           .doc(tx.id)
-          .set(tx.toMap(), SetOptions(merge: true));
+          .set(dataMap, SetOptions(merge: true));
 
-      debugPrint('[TransactionProcessor] Successfully synced transaction ${tx.id} to Firestore (Status: ${tx.status}).');
+      debugPrint('[TransactionProcessor] Successfully synced transaction ${tx.id} to Firestore (isScam: ${tx.isScam}, threatLevel: ${tx.threatLevel}).');
     } catch (e) {
       debugPrint('[TransactionProcessor] Firestore sync error: $e');
     }

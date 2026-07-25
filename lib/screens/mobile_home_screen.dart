@@ -46,7 +46,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
     final now = DateTime.now();
     return _transactionsList
         .where((tx) => tx.isVerified && tx.timestamp.day == now.day && tx.timestamp.month == now.month)
-        .fold(0.0, (sum, tx) => sum + tx.amount);
+        .fold(0.0, (sum, tx) => sum + (tx.amount ?? 0.0));
   }
 
   /// Returns total count of verified transactions today.
@@ -75,20 +75,36 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
       merchantId: 'STORE_COUNTER_01',
     );
 
+    if (!mounted) return;
+
     if (processedTx != null) {
       setState(() {
         _transactionsList.insert(0, processedTx);
       });
 
+      String snackbarText;
+      Color snackbarColor;
+
+      if (processedTx.isScam) {
+        snackbarText = '🚨 SCAM ALERT: Phishing link/threat detected in SMS!';
+        snackbarColor = Colors.red.shade900;
+      } else if (processedTx.isVerified) {
+        final amountDisplay = processedTx.amount != null ? '₱${processedTx.amount!.toStringAsFixed(2)}' : 'Payment';
+        snackbarText = '✅ VERIFIED: $amountDisplay from ${processedTx.senderName}';
+        snackbarColor = Colors.green.shade800;
+      } else {
+        snackbarText = '⚠️ DUPLICATE REJECTED: Ref #${processedTx.refNumber}';
+        snackbarColor = Colors.orange.shade900;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            processedTx.isVerified
-                ? '✅ VERIFIED: ₱${processedTx.amount.toStringAsFixed(2)} from ${processedTx.senderName}'
-                : '⚠️ DUPLICATE REJECTED: Ref #${processedTx.refNumber}',
+            snackbarText,
+            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
-          backgroundColor: processedTx.isVerified ? Colors.green.shade800 : Colors.red.shade800,
-          duration: const Duration(seconds: 3),
+          backgroundColor: snackbarColor,
+          duration: const Duration(seconds: 4),
         ),
       );
     } else {
@@ -101,7 +117,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
     }
   }
 
-  /// Displays the Dev SMS Simulator Bottom Sheet for easy testing.
+  /// Displays the Dev SMS Simulator Bottom Sheet for testing.
   void _showDevSimulatorModal() {
     final customSmsController = TextEditingController();
 
@@ -129,7 +145,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                   const Icon(Icons.bug_report, color: Color(0xFF00E676)),
                   const SizedBox(width: 8),
                   const Text(
-                    'Dev SMS Alert Simulator',
+                    'SMS Alert Simulator',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const Spacer(),
@@ -139,27 +155,94 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               const Text(
-                'Quick Presets:',
+                'Test End-to-End Flow:',
                 style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
+              
+              // 1. Test Legit SMS Button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00E676),
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.check_circle_outline, color: Colors.black),
+                  label: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Test Legit SMS (GCash ₱500.00)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      Text(
+                        'Simulates valid GCash payment from JUAN D.',
+                        style: TextStyle(fontSize: 11, color: Colors.black87),
+                      ),
+                    ],
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _handleSimulatedSms(
+                      'You have received PHP 500.00 from JUAN D. with Ref No. 1002938475. Balance: PHP 1,250.00',
+                      sourceHeader: 'GCash',
+                    );
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 10),
+
+              // 2. Test Scam SMS Button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  icon: const Icon(Icons.gpp_bad, color: Colors.white),
+                  label: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Test Scam SMS (Phishing Alert)',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      ),
+                      Text(
+                        'Simulates GCash phishing scam link message',
+                        style: TextStyle(fontSize: 11, color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _handleSimulatedSms(
+                      'GCash: Your account is LOCKED due to suspicious activity. Verify immediately at http://gcash-security-update.ph',
+                      sourceHeader: 'GCash',
+                    );
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              const Text(
+                'Other Presets:',
+                style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey, fontSize: 12),
+              ),
+              const SizedBox(height: 6),
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  ActionChip(
-                    avatar: const Icon(Icons.flash_on, size: 14, color: Colors.blue),
-                    label: const Text('GCash (₱150.00)'),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _handleSimulatedSms(
-                        'You have received PHP 150.00 of GCash from JUAN DELA CRUZ 09171234567 with Ref. No. 102938475610 on 07/25/2026 10:30 AM.',
-                        sourceHeader: 'GCash',
-                      );
-                    },
-                  ),
                   ActionChip(
                     avatar: const Icon(Icons.flash_on, size: 14, color: Colors.green),
                     label: const Text('Maya (₱500.00)'),
@@ -172,23 +255,22 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                     },
                   ),
                   ActionChip(
-                    avatar: const Icon(Icons.warning, size: 14, color: Colors.red),
+                    avatar: const Icon(Icons.warning, size: 14, color: Colors.orange),
                     label: const Text('Duplicate Ref Check'),
                     onPressed: () {
                       Navigator.pop(context);
-                      // Send same ref twice
                       _handleSimulatedSms(
-                        'You have received PHP 150.00 of GCash from JUAN DELA CRUZ 09171234567 with Ref. No. 102938475610 on 07/25/2026.',
+                        'You have received PHP 500.00 from JUAN D. with Ref No. 1002938475. Balance: PHP 1,250.00',
                         sourceHeader: 'GCash',
                       );
                     },
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               TextField(
                 controller: customSmsController,
-                maxLines: 3,
+                maxLines: 2,
                 decoration: InputDecoration(
                   hintText: 'Or paste custom SMS message here...',
                   filled: true,
@@ -199,14 +281,14 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00E676),
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0xFF00E676)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () {
@@ -216,7 +298,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                       _handleSimulatedSms(text);
                     }
                   },
-                  icon: const Icon(Icons.play_arrow),
+                  icon: const Icon(Icons.play_arrow, color: Color(0xFF00E676)),
                   label: const Text(
                     'Process Custom SMS',
                     style: TextStyle(fontWeight: FontWeight.bold),
@@ -240,7 +322,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
             Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
-                color: const Color(0xFF00E676).withOpacity(0.2),
+                color: const Color(0xFF00E676).withValues(alpha: 0.2),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.shield, color: Color(0xFF00E676), size: 20),
@@ -284,8 +366,8 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: _isProtectionActive
-                            ? const Color(0xFF00E676).withOpacity(0.15)
-                            : Colors.red.withOpacity(0.15),
+                            ? const Color(0xFF00E676).withValues(alpha: 0.15)
+                            : Colors.red.withValues(alpha: 0.15),
                         shape: BoxShape.circle,
                       ),
                       child: Icon(
@@ -318,7 +400,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                     ),
                     Switch(
                       value: _isProtectionActive,
-                      activeColor: const Color(0xFF00E676),
+                      activeThumbColor: const Color(0xFF00E676),
                       onChanged: (val) => setState(() => _isProtectionActive = val),
                     ),
                   ],
@@ -434,40 +516,57 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                 itemBuilder: (context, index) {
                   final tx = _transactionsList[index];
                   final isVerified = tx.isVerified;
+                  final isScam = tx.isScam;
+
+                  final cardBorderColor = isScam
+                      ? Colors.red
+                      : (isVerified ? Colors.transparent : Colors.orange.withValues(alpha: 0.5));
+
+                  final iconData = isScam
+                      ? Icons.gpp_bad
+                      : (isVerified ? Icons.check_circle : Icons.warning_amber);
+
+                  final iconColor = isScam
+                      ? Colors.red
+                      : (isVerified ? Colors.green : Colors.orange);
+
+                  final statusBadgeText = isScam ? 'SCAM_ALERT (HIGH)' : tx.status;
+                  final amountDisplay = tx.amount != null ? currencyFormatter.format(tx.amount) : '₱0.00';
 
                   return Card(
                     margin: const EdgeInsets.only(bottom: 10),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
-                      side: BorderSide(
-                        color: isVerified ? Colors.transparent : Colors.red.withOpacity(0.5),
-                      ),
+                      side: BorderSide(color: cardBorderColor, width: isScam ? 1.5 : 1.0),
                     ),
                     child: ListTile(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                       leading: CircleAvatar(
-                        backgroundColor: isVerified
-                            ? Colors.green.withOpacity(0.15)
-                            : Colors.red.withOpacity(0.15),
-                        child: Icon(
-                          isVerified ? Icons.check_circle : Icons.warning_amber,
-                          color: isVerified ? Colors.green : Colors.red,
-                        ),
+                        backgroundColor: iconColor.withValues(alpha: 0.15),
+                        child: Icon(iconData, color: iconColor),
                       ),
                       title: Text(
                         '${tx.senderName} (${tx.source})',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: isScam ? Colors.redAccent : Colors.white,
+                        ),
                       ),
                       subtitle: Text(
-                        'Ref: ${tx.refNumber} • ${DateFormat('hh:mm a').format(tx.timestamp)}',
-                        style: const TextStyle(fontSize: 12),
+                        isScam
+                            ? '⚠️ Phishing Link Alert • ${DateFormat('hh:mm a').format(tx.timestamp)}'
+                            : 'Ref: ${tx.refNumber} • ${DateFormat('hh:mm a').format(tx.timestamp)}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isScam ? Colors.red.shade200 : Colors.grey.shade400,
+                        ),
                       ),
                       trailing: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            currencyFormatter.format(tx.amount),
+                            amountDisplay,
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.bold,
@@ -478,17 +577,15 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> {
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
-                              color: isVerified
-                                  ? Colors.green.withOpacity(0.2)
-                                  : Colors.red.withOpacity(0.2),
+                              color: iconColor.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              tx.status,
+                              statusBadgeText,
                               style: TextStyle(
                                 fontSize: 9,
                                 fontWeight: FontWeight.bold,
-                                color: isVerified ? Colors.green : Colors.red,
+                                color: iconColor,
                               ),
                             ),
                           ),

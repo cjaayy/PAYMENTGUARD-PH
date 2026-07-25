@@ -6,6 +6,8 @@ class ParsedSmsResult {
   final String source; // 'GCash', 'Maya', or 'Unknown'
   final String rawBody;
   final bool isValid;
+  final bool isScam;
+  final String threatLevel; // 'LOW' or 'HIGH'
   final String? errorMessage;
 
   const ParsedSmsResult({
@@ -15,12 +17,14 @@ class ParsedSmsResult {
     required this.source,
     required this.rawBody,
     required this.isValid,
+    required this.isScam,
+    required this.threatLevel,
     this.errorMessage,
   });
 
   @override
   String toString() {
-    return 'ParsedSmsResult(amount: $amount, refNumber: $refNumber, senderName: $senderName, source: $source, isValid: $isValid, error: $errorMessage)';
+    return 'ParsedSmsResult(amount: $amount, refNumber: $refNumber, senderName: $senderName, source: $source, isScam: $isScam, threatLevel: $threatLevel, isValid: $isValid, error: $errorMessage)';
   }
 }
 
@@ -48,6 +52,19 @@ class SmsParser {
     caseSensitive: false,
   );
 
+  /// Phishing & Scam Keywords / Links Detection
+  static final RegExp _urlRegex = RegExp(r'https?://[^\s]+', caseSensitive: false);
+  static const List<String> _scamKeywords = [
+    'account is locked',
+    'locked',
+    'suspicious activity',
+    'verify immediately',
+    'security-update',
+    'click here',
+    'claim bonus',
+    'account suspended',
+  ];
+
   /// Parses raw SMS text (and optional SMS sender ID) to extract amount, reference number, sender name, and e-wallet source.
   static ParsedSmsResult parse(String smsBody, {String? senderHeader}) {
     if (smsBody.trim().isEmpty) {
@@ -55,38 +72,55 @@ class SmsParser {
         source: 'Unknown',
         rawBody: smsBody,
         isValid: false,
+        isScam: false,
+        threatLevel: 'LOW',
         errorMessage: 'SMS body is empty.',
       );
     }
 
-    // 1. Determine Source (GCash vs Maya)
+    // 1. Phishing & Scam Threat Assessment
+    final bool hasUrl = _urlRegex.hasMatch(smsBody);
+    final String lowerBody = smsBody.toLowerCase();
+    final bool hasScamKeyword = _scamKeywords.any((kw) => lowerBody.contains(kw));
+    final bool isScam = hasUrl || hasScamKeyword;
+    final String threatLevel = isScam ? 'HIGH' : 'LOW';
+
+    // 2. Determine Source (GCash vs Maya)
     final source = detectSource(smsBody, senderHeader: senderHeader);
 
-    // 2. Extract Amount
+    // 3. Extract Amount
     final double? amount = extractAmount(smsBody);
 
-    // 3. Extract Reference Number
+    // 4. Extract Reference Number
     final String? refNumber = extractRefNumber(smsBody);
 
-    // 4. Extract Sender Name
+    // 5. Extract Sender Name
     final String? senderName = extractSenderName(smsBody);
 
-    // 5. Validation Check
-    final bool isValid = amount != null && amount > 0 && refNumber != null && refNumber.isNotEmpty;
+    // 6. Validation Check
+    // If it's a scam SMS, it is processed specially as a Scam Alert.
+    // For legitimate payment SMS, valid means valid amount & reference number exist.
+    final bool isValid = isScam || (amount != null && amount > 0 && refNumber != null && refNumber.isNotEmpty);
     String? errorMessage;
-    if (amount == null) {
-      errorMessage = 'Failed to extract valid amount.';
-    } else if (refNumber == null || refNumber.isEmpty) {
-      errorMessage = 'Failed to extract reference number.';
+    if (!isScam) {
+      if (amount == null) {
+        errorMessage = 'Failed to extract valid amount.';
+      } else if (refNumber == null || refNumber.isEmpty) {
+        errorMessage = 'Failed to extract reference number.';
+      }
+    } else {
+      errorMessage = 'PHISHING/SCAM SMS DETECTED.';
     }
 
     return ParsedSmsResult(
       amount: amount,
       refNumber: refNumber,
-      senderName: senderName ?? 'UNKNOWN SENDER',
+      senderName: senderName ?? (isScam ? 'PHISHING SENDER' : 'UNKNOWN SENDER'),
       source: source,
       rawBody: smsBody,
       isValid: isValid,
+      isScam: isScam,
+      threatLevel: threatLevel,
       errorMessage: errorMessage,
     );
   }
