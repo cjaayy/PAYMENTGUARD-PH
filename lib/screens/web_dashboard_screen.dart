@@ -2,8 +2,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:printing/printing.dart';
 
 import '../models/transaction_model.dart';
+import '../services/pdf_report_service.dart';
+import '../utils/web_download.dart';
 import 'customer_counter_screen.dart';
 
 /// Responsive Web Dashboard & Customer Counter Display Screen for Business Owners.
@@ -329,6 +333,143 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     );
   }
 
+  bool _isToday(DateTime date) {
+    final now = DateTime.now();
+    return date.year == now.year && date.month == now.month && date.day == now.day;
+  }
+
+  Map<String, String> formatCsvDateTime(dynamic rawTimestamp) {
+    if (rawTimestamp == null) return {'date': '"N/A"', 'time': '"N/A"'};
+
+    DateTime dt;
+    if (rawTimestamp is Timestamp) {
+      dt = rawTimestamp.toDate();
+    } else if (rawTimestamp is DateTime) {
+      dt = rawTimestamp;
+    } else if (rawTimestamp is int) {
+      dt = DateTime.fromMillisecondsSinceEpoch(rawTimestamp);
+    } else {
+      dt = DateTime.tryParse(rawTimestamp.toString()) ?? DateTime.now();
+    }
+
+    String year = dt.year.toString();
+    String month = dt.month.toString().padLeft(2, '0');
+    String day = dt.day.toString().padLeft(2, '0');
+
+    int hourInt = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
+    String hour = hourInt.toString().padLeft(2, '0');
+    String minute = dt.minute.toString().padLeft(2, '0');
+    String period = dt.hour >= 12 ? 'PM' : 'AM';
+
+    // Wrapping in `="VALUE"` forces Excel to render as short plain text strings
+    String dateStr = '="$year-$month-$day"';
+    String timeStr = '="$hour:$minute $period"';
+
+    return {'date': dateStr, 'time': timeStr};
+  }
+
+  String _formattedCsvRef(String rawRef) {
+    final String trimmed = rawRef.trim();
+    if (trimmed.isEmpty || trimmed == 'NO_REF' || trimmed == 'N/A' || trimmed == 'NULL') {
+      return '"$trimmed"';
+    }
+    // Wrapping with `="VALUE"` forces Excel & Google Sheets to treat it as exact plain text
+    return '="$trimmed"';
+  }
+
+  void _exportTransactionsCsv(List<TransactionModel> transactions) {
+    final StringBuffer buffer = StringBuffer();
+    buffer.writeln('Date,Time,E-Wallet Source,Sender Name,Amount (PHP),Reference Number,Status');
+
+    for (final tx in transactions) {
+      final dateTimeMap = formatCsvDateTime(tx.timestamp);
+      final String dateCol = dateTimeMap['date']!;
+      final String timeCol = dateTimeMap['time']!;
+
+      final String source = _escapeCsv(tx.provider.isNotEmpty ? tx.provider : tx.source);
+      final String sender = _escapeCsv(tx.senderName.isNotEmpty ? tx.senderName : 'N/A');
+      final String amountStr = tx.amount != null ? tx.amount!.toStringAsFixed(2) : '0.00';
+      final String rawRef = tx.refNumber.trim().isNotEmpty ? tx.refNumber.trim() : 'NO_REF';
+      final String refNo = _formattedCsvRef(rawRef);
+
+      String statusStr = 'VERIFIED';
+      if (tx.isScam) {
+        statusStr = 'PHISHING_SCAM_FLAGGED';
+      } else if (tx.isDuplicate) {
+        statusStr = 'DUPLICATE_REJECTED';
+      }
+
+      buffer.writeln('$dateCol,$timeCol,$source,$sender,$amountStr,$refNo,$statusStr');
+    }
+
+    final String todayDateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final String filename = 'PaymentGuard_Log_$todayDateStr.csv';
+
+    downloadFile(buffer.toString(), filename);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ CSV Log Exported successfully ($filename)'),
+          backgroundColor: const Color(0xFF00E676),
+        ),
+      );
+    }
+  }
+
+  Future<void> _exportTransactionsPdf(
+    List<TransactionModel> transactions,
+    String storeName,
+    String ownerName,
+  ) async {
+    try {
+      final pdfBytes = await PdfReportService.generateDailyPdfReport(
+        transactions: transactions,
+        storeName: storeName,
+        ownerName: ownerName,
+      );
+
+      final String todayDateStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+      final String filename = 'PaymentGuard_Report_$todayDateStr.pdf';
+
+      try {
+        await Printing.layoutPdf(
+          onLayout: (PdfPageFormat format) async => pdfBytes,
+          name: filename,
+        );
+      } catch (printErr) {
+        // Fallback to direct web download if Printing plugin is unavailable
+        downloadBytes(pdfBytes, filename);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ PDF Sales Report generated ($filename)'),
+            backgroundColor: const Color(0xFF00E676),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error generating PDF report: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  String _escapeCsv(String field) {
+    if (field.contains(',') || field.contains('"') || field.contains('\n')) {
+      final escaped = field.replaceAll('"', '""');
+      return '"$escaped"';
+    }
+    return field;
+  }
+
   // ===========================================================================
   // OWNER DASHBOARD VIEW
   // ===========================================================================
@@ -337,10 +478,15 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
     List<TransactionModel> allTransactions,
     List<TransactionModel> filteredTransactions,
   ) {
-    final verifiedTxList = allTransactions.where((t) => t.isVerified);
-    final totalDailyVolume = verifiedTxList.fold(0.0, (previousValue, element) => previousValue + (element.amount ?? 0.0));
-    final totalVerifiedCount = verifiedTxList.length;
-    final totalBlockedDuplicates = allTransactions.where((t) => t.isDuplicate).length;
+    final todayTxList = allTransactions.where((t) => _isToday(t.timestamp)).toList();
+    final todayRevenue = todayTxList
+        .where((t) => !t.isScam)
+        .fold(0.0, (previousValue, element) => previousValue + (element.amount ?? 0.0));
+    final todayVerifiedCount = todayTxList.where((t) => !t.isScam).length;
+    final todayScamsBlocked = todayTxList.where((t) => t.isScam).length;
+
+    String currentStoreName = 'PaymentGuard Store';
+    String currentOwnerName = FirebaseAuth.instance.currentUser?.displayName ?? 'Store Owner';
 
     return Scaffold(
       appBar: AppBar(
@@ -365,6 +511,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     if (data != null) {
                       storeName = data['store_name']?.toString() ?? storeName;
                       ownerName = data['owner_name']?.toString() ?? data['full_name']?.toString() ?? ownerName;
+                      currentStoreName = storeName;
+                      currentOwnerName = ownerName;
                     }
                   }
 
@@ -406,6 +554,30 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
         actions: [
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E293B),
+              foregroundColor: const Color(0xFF00E676),
+              side: const BorderSide(color: Color(0xFF00E676), width: 1.5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => _exportTransactionsCsv(allTransactions),
+            icon: const Icon(Icons.table_chart, size: 18),
+            label: const Text('Export CSV', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E293B),
+              foregroundColor: Colors.redAccent,
+              side: const BorderSide(color: Colors.redAccent, width: 1.5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => _exportTransactionsPdf(allTransactions, currentStoreName, currentOwnerName),
+            icon: const Icon(Icons.picture_as_pdf, size: 18),
+            label: const Text('Export PDF Report', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00E676),
               foregroundColor: Colors.black,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -436,22 +608,22 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   return Column(
                     children: [
                       _buildMetricCard(
-                        title: 'Total Sales Volume Today',
-                        value: currencyFormatter.format(totalDailyVolume),
+                        title: 'Total Revenue Today',
+                        value: currencyFormatter.format(todayRevenue),
                         icon: Icons.account_balance_wallet,
                         color: const Color(0xFF00E676),
                       ),
                       const SizedBox(height: 12),
                       _buildMetricCard(
-                        title: 'Verified Transactions',
-                        value: '$totalVerifiedCount Payments',
-                        icon: Icons.check_circle,
+                        title: 'Total Transactions',
+                        value: '$todayVerifiedCount Orders',
+                        icon: Icons.receipt_long,
                         color: Colors.blueAccent,
                       ),
                       const SizedBox(height: 12),
                       _buildMetricCard(
-                        title: 'Duplicate Scams Blocked',
-                        value: '$totalBlockedDuplicates Attempted',
+                        title: 'Scam Attempts Blocked',
+                        value: '$todayScamsBlocked Attempted',
                         icon: Icons.security,
                         color: Colors.redAccent,
                       ),
@@ -462,8 +634,8 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                   children: [
                     Expanded(
                       child: _buildMetricCard(
-                        title: 'Total Sales Volume Today',
-                        value: currencyFormatter.format(totalDailyVolume),
+                        title: 'Total Revenue Today',
+                        value: currencyFormatter.format(todayRevenue),
                         icon: Icons.account_balance_wallet,
                         color: const Color(0xFF00E676),
                       ),
@@ -471,17 +643,17 @@ class _WebDashboardScreenState extends State<WebDashboardScreen> {
                     const SizedBox(width: 16),
                     Expanded(
                       child: _buildMetricCard(
-                        title: 'Verified Transactions',
-                        value: '$totalVerifiedCount Payments',
-                        icon: Icons.check_circle,
+                        title: 'Total Transactions',
+                        value: '$todayVerifiedCount Orders',
+                        icon: Icons.receipt_long,
                         color: Colors.blueAccent,
                       ),
                     ),
                     const SizedBox(width: 16),
                     Expanded(
                       child: _buildMetricCard(
-                        title: 'Duplicate Scams Blocked',
-                        value: '$totalBlockedDuplicates Attempted',
+                        title: 'Scam Attempts Blocked',
+                        value: '$todayScamsBlocked Attempted',
                         icon: Icons.security,
                         color: Colors.redAccent,
                       ),
