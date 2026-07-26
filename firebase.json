@@ -1,1 +1,36 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"paymentguard-ph","appId":"1:212951566209:android:fe7ec26b843b1c48c24a80","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"paymentguard-ph","configurations":{"android":"1:212951566209:android:fe7ec26b843b1c48c24a80","web":"1:212951566209:web:fc1007d5597c02dcc24a80"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "paymentguard-ph",
+          "appId": "1:212951566209:android:fe7ec26b843b1c48c24a80",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "paymentguard-ph",
+          "configurations": {
+            "android": "1:212951566209:android:fe7ec26b843b1c48c24a80",
+            "web": "1:212951566209:web:fc1007d5597c02dcc24a80"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

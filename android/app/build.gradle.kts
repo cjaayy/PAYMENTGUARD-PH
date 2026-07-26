@@ -10,7 +10,7 @@ plugins {
 
 android {
     namespace = "com.example.paymentguard_ph"
-    compileSdk = 36 // In-update sa 36 para sa flutter_tts at jni packages
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -25,15 +25,20 @@ android {
     defaultConfig {
         applicationId = "com.example.paymentguard_ph"
 
-        minSdk = flutter.minSdkVersion // Set to 21 para compatible sa karamihan ng plugins
-        targetSdk = 36 // In-update sa 36
+        minSdk = flutter.minSdkVersion
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true
     }
 
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 }
