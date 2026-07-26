@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,8 +8,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:flutter_notification_listener/flutter_notification_listener.dart';
 import '../models/transaction_model.dart';
 import '../services/duplicate_checker_service.dart';
+import '../services/notification_listener_service.dart';
 import '../services/transaction_processor.dart';
 import '../services/voice_alert_service.dart';
 import '../utils/ocr_receipt_parser.dart';
@@ -75,6 +78,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with Widget
 
   @override
   void dispose() {
+    _notificationSubscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -106,10 +110,10 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with Widget
     }
 
     try {
-      final notification = await Permission.notification.status;
-      notificationGranted = notification.isGranted;
+      final listenerPermission = await NotificationsListener.hasPermission;
+      notificationGranted = listenerPermission ?? false;
     } catch (e) {
-      debugPrint('⚠️ Warning: Notification permission check error: $e');
+      debugPrint('⚠️ Warning: Notification listener permission check error: $e');
     }
 
     // Safe battery optimization check for custom Android OEMs (Xiaomi, Samsung, Huawei, etc.)
@@ -123,7 +127,7 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with Widget
 
     debugPrint('[PermissionChecker] App resumed / re-checked permission statuses:');
     debugPrint('  - 📱 SMS Permission Granted: $smsGranted');
-    debugPrint('  - 🔔 Notification Granted: $notificationGranted');
+    debugPrint('  - 🔔 Notification Listener Granted: $notificationGranted');
     debugPrint('  - 🔋 Battery Opt Disabled: $batteryOptDisabled');
 
     if (mounted) {
@@ -136,6 +140,8 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with Widget
     }
   }
 
+  StreamSubscription<dynamic>? _notificationSubscription;
+
   void _initServices() {
     final box = Hive.box<String>(kVerifiedRefNumbersBox);
     _duplicateChecker = DuplicateCheckerService(box);
@@ -144,6 +150,62 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with Widget
       duplicateChecker: _duplicateChecker,
       voiceAlert: _voiceAlert,
     );
+
+    _initNotificationListener();
+  }
+
+  Future<void> _initNotificationListener() async {
+    try {
+      final bool? hasPermission = await NotificationsListener.hasPermission;
+      debugPrint("Notification Listener Permission Status: $hasPermission");
+
+      if (hasPermission != true) {
+        debugPrint("⚠️ Notification Listener permission is FALSE. Prompting user to enable settings...");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⚠️ Notification Access required for MariBank, GCash, & Maya. Opening settings...'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        await NotificationsListener.openPermissionSettings();
+        return;
+      }
+
+      await NotificationsListener.initialize();
+      debugPrint("Notification Listener Service Initialized: SUCCESS");
+
+      _notificationSubscription?.cancel();
+      _notificationSubscription = NotificationsListener.receivePort?.listen((evt) {
+        if (evt == null) return;
+
+        // NO-FILTER BROADCAST DIAGNOSTIC LOG (Logs every single notification received by OS)
+        debugPrint("🔔 RAW NOTIFICATION EVENT RECEIVED:");
+        debugPrint("   - Package: ${evt.packageName}");
+        debugPrint("   - Title: ${evt.title}");
+        debugPrint("   - Text: ${evt.text ?? evt.message}");
+
+        if (!_isProtectionActive) return;
+
+        AppNotificationListenerService.processNotificationEvent(
+          evt,
+          processor: _transactionProcessor,
+          onStatusUpdate: (msg, isError) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(msg, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  backgroundColor: isError ? Colors.red.shade900 : Colors.green.shade800,
+                ),
+              );
+            }
+          },
+        );
+      });
+    } catch (e) {
+      debugPrint('⚠️ Warning: Could not initialize notification listener stream: $e');
+    }
   }
 
   /// Calculates total verified sales volume collected today.
@@ -1211,10 +1273,10 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with Widget
 
             if (!_notificationGranted) ...[
               _buildPermissionActionRow(
-                title: 'Notifications (Sound & voice alerts)',
-                buttonText: 'Enable Notifications',
+                title: 'Notification Access (Captures GCash, Maya & MariBank push alerts)',
+                buttonText: 'Open Notification Access Settings',
                 onPressed: () async {
-                  await Permission.notification.request();
+                  await NotificationsListener.openPermissionSettings();
                   _checkPermissions();
                 },
               ),
@@ -1242,9 +1304,9 @@ class _MobileHomeScreenState extends ConsumerState<MobileHomeScreen> with Widget
                   label: const Text('🔄 Re-check Status', style: TextStyle(color: Color(0xFF00E676), fontSize: 12, fontWeight: FontWeight.bold)),
                 ),
                 TextButton.icon(
-                  onPressed: () => openAppSettings(),
+                  onPressed: () => NotificationsListener.openPermissionSettings(),
                   icon: const Icon(Icons.settings, size: 16, color: Colors.white70),
-                  label: const Text('Open System Settings', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  label: const Text('Open Notification Settings', style: TextStyle(color: Colors.white70, fontSize: 12)),
                 ),
               ],
             ),

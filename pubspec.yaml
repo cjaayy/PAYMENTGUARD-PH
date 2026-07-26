@@ -24,6 +24,7 @@ dependencies:
   flutter_tts: ^4.2.1
 
   another_telephony: ^0.4.0
+  flutter_notification_listener: ^1.4.0
 
   # State Management
   flutter_riverpod: ^2.6.1
